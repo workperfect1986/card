@@ -151,7 +151,8 @@
         }
 
         function conectarWebSocket() {
-            socket = new WebSocket(`ws://${window.location.host}/ws`);
+            // Correção: usa wss:// para HTTPS
+            socket = new WebSocket(`wss://${window.location.host}/ws`);
             
             socket.onopen = () => {
                 document.getElementById('status-texto').textContent = "WebSocket Conectado";
@@ -179,6 +180,7 @@
             };
 
             socket.onclose = () => {
+                document.getElementById('status-texto').textContent = "Reconectando...";
                 setTimeout(conectarWebSocket, 2000);
             };
         }
@@ -234,7 +236,6 @@
             document.getElementById('container-logs').innerHTML = '';
         }
 
-        // Inicialização
         window.onload = () => {
             criarBotoesCanais();
             conectarWebSocket();
