@@ -127,7 +127,7 @@
         <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 max-w-sm text-center">
             <i class="fa-solid fa-circle-check text-6xl text-emerald-500 mb-6"></i>
             <h3 class="text-2xl font-bold mb-2">Processamento Concluído</h3>
-            <p class="text-zinc-400 mb-6">Todos os cartões foram processados com sucesso.</p>
+            <p class="text-zinc-400 mb-6">Todos os cartões foram processados.</p>
             <button onclick="fecharModal()" 
                 class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-semibold transition">
                 Fechar
@@ -180,7 +180,8 @@
                     logsContainer.appendChild(p);
                     logsContainer.scrollTop = logsContainer.scrollHeight;
 
-                    if (data.mensagem.includes("APROVADO") || data.mensagem.includes("RESULTADO")) {
+                    // Conta tanto APROVADO quanto REPROVADO
+                    if (data.mensagem.includes("APROVADO") || data.mensagem.includes("Reprovado") || data.mensagem.includes("REPROVADO")) {
                         processados++;
                         atualizarProgresso();
                     }
@@ -190,7 +191,8 @@
                     adicionarAprovado(data.cartao);
                 }
 
-                if (data.type === "status" && !data.rodando && testeIniciado) {
+                // Só mostra o modal quando realmente terminar
+                if (data.type === "status" && data.rodando === false && testeIniciado && processados > 0) {
                     mostrarModalFinal();
                 }
             };
@@ -219,6 +221,10 @@
             document.getElementById('barra-preenchimento').style.width = percent + '%';
             document.getElementById('txt-porcentagem').textContent = percent + '%';
             document.getElementById('txt-contador-progresso').textContent = `${processados} / ${totalCartoes}`;
+            
+            if (percent >= 100) {
+                document.getElementById('txt-status-progresso').textContent = "Finalizado!";
+            }
         }
 
         function mostrarModalFinal() {
@@ -229,10 +235,12 @@
         function fecharModal() {
             document.getElementById('modal-fim').classList.add('hidden');
             document.getElementById('modal-fim').classList.remove('flex');
-            // Resetar interface
-            document.getElementById('wrapper-progresso').classList.add('hidden');
+            
+            // Reseta a interface
+            testeIniciado = false;
             document.getElementById('btn-iniciar').classList.remove('hidden');
             document.getElementById('btn-parar').classList.add('hidden');
+            document.getElementById('wrapper-progresso').classList.add('hidden');
         }
 
         function iniciarTeste() {
@@ -242,6 +250,10 @@
             totalCartoes = lista.split('\n').filter(l => l.trim()).length;
             processados = 0;
             aprovadosList = [];
+
+            // Limpa lista de aprovados
+            document.getElementById('container-aprovados').innerHTML = '';
+            document.getElementById('contador-aprovados').textContent = '0';
 
             fetch('/api/iniciar', {
                 method: 'POST',
@@ -256,6 +268,12 @@
             document.getElementById('wrapper-progresso').classList.remove('hidden');
             document.getElementById('btn-iniciar').classList.add('hidden');
             document.getElementById('btn-parar').classList.remove('hidden');
+            
+            // Reset da barra
+            document.getElementById('barra-preenchimento').style.width = '0%';
+            document.getElementById('txt-porcentagem').textContent = '0%';
+            document.getElementById('txt-contador-progresso').textContent = `0 / ${totalCartoes}`;
+            document.getElementById('txt-status-progresso').textContent = "Processando...";
         }
 
         function pararTeste() {
