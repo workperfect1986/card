@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11
 
 # Instala dependências do sistema
 RUN apt-get update && apt-get install -y \
@@ -25,7 +25,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Instala o Chromium do Playwright
+# Instala o Chromium
 RUN playwright install chromium
 
 COPY . .
