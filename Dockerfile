@@ -1,6 +1,6 @@
 FROM python:3.11
 
-# Instala dependências do sistema
+# Instala dependências do sistema necessárias para o Chromium
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libpango-1.0-0 \
     libcairo2 \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
