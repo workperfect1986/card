@@ -15,8 +15,8 @@ from playwright.async_api import async_playwright
 URL_LOGIN = "https://digital.unimar.br/login"
 URL_MEUS_CARTOES = "https://digital.unimar.br/areadoaluno/conta/meuscartoes"
 
-EMAIL = os.getenv("UNIMAR_EMAIL", "dani4567@gmail.com")
-SENHA = os.getenv("UNIMAR_SENHA", "399.409.648-03")
+EMAIL = os.getenv("UNIMAR_EMAIL")
+SENHA = os.getenv("UNIMAR_SENHA")
 NOME_FIXO = "Bruna Mendes"
 
 # ===================== ESTADO =====================
@@ -61,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         estado["clients"].discard(websocket)
 
-# ===================== PLAYWRIGHT =====================
+# ===================== PLAYWRIGHT HELPERS =====================
 async def login_mestre(playwright):
     try:
         log("[Autenticação] Iniciando login mestre...")
@@ -193,4 +193,4 @@ async def index():
         return f.read()
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="localhost", port=5000, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=5000)
