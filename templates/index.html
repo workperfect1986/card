@@ -151,7 +151,6 @@
         }
 
         function conectarWebSocket() {
-            // Correção: usa wss:// para HTTPS
             socket = new WebSocket(`wss://${window.location.host}/ws`);
             
             socket.onopen = () => {
