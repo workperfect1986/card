@@ -1,0 +1,43 @@
+# Ambientes virtuais
+venv/
+env/
+.venv/
+ENV/
+
+# Arquivos de ambiente (sensíveis)
+.env
+.env.local
+.env.production
+.env.development
+
+# Arquivos gerados pelo Playwright
+playwright/.cache/
+session_unimar.json
+sessao_unimar.json
+
+# Arquivos de log e dados
+*.log
+aprovados.txt
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Render / Build
+build/
+dist/
+*.egg-info/
+
+# Arquivos temporários
+temp/
+tmp/
