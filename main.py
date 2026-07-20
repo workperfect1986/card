@@ -23,6 +23,9 @@ NOME_FIXO = "Bruna Mendes"
 estado = {
     "rodando": False,
     "clients": set(),
+    "total_cartoes": 0,
+    "processados": 0,
+    "aprovados": 0,
 }
 
 def log(mensagem: str):
@@ -58,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         estado["clients"].discard(websocket)
 
-# ===================== FUNÇÕES DE FAXINA =====================
+# ===================== FUNÇÕES =====================
 async def limpar_cartoes_antigos(page):
     try:
         log("[Faxina] Iniciando limpeza de cartões antigos...")
@@ -89,7 +92,7 @@ async def limpar_cartoes_antigos(page):
     except Exception as e:
         log(f"[Faxina] Erro: {e}")
 
-# ===================== LOGIN =====================
+
 async def login_mestre(playwright):
     try:
         log("[Autenticação] Iniciando login mestre...")
@@ -104,7 +107,7 @@ async def login_mestre(playwright):
 
         await page.wait_for_selector("text=Meus Cartões", timeout=30000)
 
-        # Faxina ANTES de começar os testes
+        # Faxina ANTES dos testes
         await limpar_cartoes_antigos(page)
 
         await context.storage_state(path="sessao_unimar.json")
@@ -117,7 +120,7 @@ async def login_mestre(playwright):
         log(f"[ERRO] Login falhou: {e}")
         return False
 
-# ===================== WORKER =====================
+
 async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict):
     try:
         await asyncio.sleep(id_worker * 2.5)
@@ -167,11 +170,17 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_f
     finally:
         await context.close()
 
-# ===================== PROCESSAMENTO PRINCIPAL =====================
+
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
         linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
         linhas = list(dict.fromkeys(linhas))
+
+        estado["total_cartoes"] = len(linhas)
+        estado["processados"] = 0
+        estado["aprovados"] = 0
+
+        await broadcast("status", {"total": estado["total_cartoes"]})
 
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
@@ -187,7 +196,7 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             tasks = [asyncio.create_task(worker_contexto(i, browser, fila, estado_fluxo)) for i in range(1, num_canais + 1)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Faxina FINAL se houver aprovados
+            # Faxina FINAL
             if estado_fluxo["houve_aprovados"]:
                 log("[Sistema] Iniciando faxina final...")
                 try:
@@ -208,6 +217,7 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         estado["rodando"] = False
         await broadcast("status", {"rodando": False})
         log("[Sistema] Processamento finalizado.")
+
 
 # ===================== ROTAS =====================
 class IniciarRequest(BaseModel):
