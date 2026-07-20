@@ -1,9 +1,7 @@
-FROM python:3.11
+FROM python:3.11-slim
 
-# Instala dependências do sistema necessárias para o Chromium
+# Instala dependências mínimas
 RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
     libnss3 \
     libnspr4 \
     libatk1.0-0 \
@@ -18,7 +16,6 @@ RUN apt-get update && apt-get install -y \
     libasound2 \
     libpango-1.0-0 \
     libcairo2 \
-    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -27,7 +24,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Instala o Chromium
-RUN playwright install chromium
+RUN playwright install chromium --with-deps
 
 COPY . .
 
