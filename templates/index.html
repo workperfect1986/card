@@ -83,13 +83,35 @@
     </div>
 
     <!-- COLUNA DIREITA -->
-    <div class="w-96 space-y-8">
+    <div class="w-96 space-y-6">
       
-      <!-- APROVADOS -->
-      <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-3xl p-8 text-center">
-        <h2 class="text-green-100 text-lg font-medium">APROVADOS</h2>
-        <div id="approved-count" class="text-7xl font-bold mt-4 mb-2">0</div>
-        <p class="text-green-100/70">cartões</p>
+      <!-- APROVADOS + REPROVADOS -->
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-3xl p-6 text-center">
+          <h2 class="text-green-100 text-sm font-medium">APROVADOS</h2>
+          <div id="approved-count" class="text-5xl font-bold mt-2 mb-1">0</div>
+          <p class="text-green-100/70 text-xs">cartões</p>
+        </div>
+        
+        <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-3xl p-6 text-center">
+          <h2 class="text-red-100 text-sm font-medium">REPROVADOS</h2>
+          <div id="rejected-count" class="text-5xl font-bold mt-2 mb-1">0</div>
+          <p class="text-red-100/70 text-xs">cartões</p>
+        </div>
+      </div>
+
+      <!-- LISTA DE APROVADOS COM COPIAR -->
+      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-semibold">Cartões Aprovados</h2>
+          <button onclick="copiarAprovados()"
+                  class="text-xs bg-green-600 hover:bg-green-500 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition">
+            <i class="fa-regular fa-copy"></i> Copiar
+          </button>
+        </div>
+        <div id="approved-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-green-300">
+          <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
+        </div>
       </div>
 
       <!-- INSTÂNCIAS PARALELAS -->
@@ -102,7 +124,7 @@
       </div>
 
       <!-- HISTÓRICO -->
-      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 h-[460px] flex flex-col">
+      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 h-[320px] flex flex-col">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-lg font-semibold">Histórico de Eventos</h2>
           <button onclick="limparLogs()"
@@ -137,6 +159,8 @@
     let totalCartoes = 0;
     let processados = 0;
     let aprovados = 0;
+    let reprovados = 0;
+    let listaAprovados = [];
 
     function criarBotoesCanais() {
       const container = document.getElementById('canais-buttons');
@@ -176,9 +200,14 @@
         if (data.type === "log") {
           adicionarHistorico(data.mensagem);
 
-          // Conta tanto APROVADO quanto REPROVADO
-          if (data.mensagem.includes("APROVADO") || data.mensagem.includes("Reprovado") || data.mensagem.includes("REPROVADO")) {
+          if (data.mensagem.includes("APROVADO") || data.mensagem.includes("✅")) {
             processados++;
+            atualizarProgresso();
+          }
+          if (data.mensagem.includes("Reprovado") || data.mensagem.includes("REPROVADO") || data.mensagem.includes("❌")) {
+            processados++;
+            reprovados++;
+            document.getElementById('rejected-count').textContent = reprovados;
             atualizarProgresso();
           }
         }
@@ -186,6 +215,7 @@
         if (data.type === "aprovado") {
           aprovados++;
           document.getElementById('approved-count').textContent = aprovados;
+          adicionarAprovado(data.cartao);
         }
 
         if (data.type === "status") {
@@ -200,6 +230,34 @@
         document.getElementById('status-led').className = "w-3 h-3 bg-yellow-500 rounded-full animate-pulse";
         setTimeout(conectarWebSocket, 2000);
       };
+    }
+
+    function adicionarAprovado(cartao) {
+      if (listaAprovados.includes(cartao)) return;
+      listaAprovados.push(cartao);
+
+      const container = document.getElementById('approved-list');
+      
+      // Remove a mensagem "Nenhum aprovado"
+      if (container.querySelector('p')) {
+        container.innerHTML = '';
+      }
+
+      const div = document.createElement('div');
+      div.className = "bg-green-900/30 border border-green-700/50 rounded-xl p-3 break-all";
+      div.textContent = cartao;
+      container.appendChild(div);
+    }
+
+    function copiarAprovados() {
+      if (listaAprovados.length === 0) {
+        alert("Nenhum cartão aprovado para copiar.");
+        return;
+      }
+      const texto = listaAprovados.join('\n');
+      navigator.clipboard.writeText(texto).then(() => {
+        alert("Aprovados copiados com sucesso!");
+      });
     }
 
     function adicionarHistorico(mensagem) {
@@ -239,8 +297,12 @@
       totalCartoes = lista.split('\n').filter(l => l.trim()).length;
       processados = 0;
       aprovados = 0;
+      reprovados = 0;
+      listaAprovados = [];
 
       document.getElementById('approved-count').textContent = '0';
+      document.getElementById('rejected-count').textContent = '0';
+      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
       document.getElementById('progress').style.width = '0%';
       document.getElementById('current').textContent = '0';
       document.getElementById('total').textContent = totalCartoes;
