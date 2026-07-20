@@ -61,11 +61,30 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         estado["clients"].discard(websocket)
 
-# ===================== PLAYWRIGHT HELPERS =====================
+# ===================== PLAYWRIGHT =====================
 async def login_mestre(playwright):
     try:
         log("[Autenticação] Iniciando login mestre...")
-        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+        browser = await playwright.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-client-side-phishing-detection",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-features=Translate,OptimizationHints,MediaRouter",
+                "--no-first-run",
+                "--disable-sync"
+            ]
+        )
         context = await browser.new_context()
         page = await context.new_page()
 
@@ -151,7 +170,15 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             if not await login_mestre(pw):
                 return
 
-            browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
+            browser = await pw.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu"
+                ]
+            )
             tasks = [asyncio.create_task(worker(i, browser, fila)) for i in range(1, num_canais + 1)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
