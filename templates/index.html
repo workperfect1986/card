@@ -122,6 +122,19 @@
         </div>
     </main>
 
+    <!-- Modal de Finalização -->
+    <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50">
+        <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 max-w-sm text-center">
+            <i class="fa-solid fa-circle-check text-6xl text-emerald-500 mb-6"></i>
+            <h3 class="text-2xl font-bold mb-2">Processamento Concluído</h3>
+            <p class="text-zinc-400 mb-6">Todos os cartões foram processados.</p>
+            <button onclick="fecharModal()" 
+                class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-semibold transition">
+                Fechar
+            </button>
+        </div>
+    </div>
+
     <script>
         let socket;
         let testeIniciado = false;
@@ -176,6 +189,10 @@
                 if (data.type === "aprovado") {
                     adicionarAprovado(data.cartao);
                 }
+
+                if (data.type === "status" && !data.rodando && testeIniciado) {
+                    mostrarModalFinal();
+                }
             };
 
             socket.onclose = () => {
@@ -202,6 +219,16 @@
             document.getElementById('barra-preenchimento').style.width = percent + '%';
             document.getElementById('txt-porcentagem').textContent = percent + '%';
             document.getElementById('txt-contador-progresso').textContent = `${processados} / ${totalCartoes}`;
+        }
+
+        function mostrarModalFinal() {
+            document.getElementById('modal-fim').classList.remove('hidden');
+            document.getElementById('modal-fim').classList.add('flex');
+        }
+
+        function fecharModal() {
+            document.getElementById('modal-fim').classList.add('hidden');
+            document.getElementById('modal-fim').classList.remove('flex');
         }
 
         function iniciarTeste() {
