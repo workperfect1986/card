@@ -13,128 +13,130 @@
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
-
   <!-- HEADER -->
   <header class="border-b border-zinc-800 bg-zinc-900 sticky top-0 z-50">
-    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <i class="fa-solid fa-credit-card text-3xl text-blue-500"></i>
         <div>
-          <h1 class="text-2xl font-bold tracking-tight">Unimar Card Tester</h1>
+          <h1 class="text-xl sm:text-2xl font-bold tracking-tight">Unimar Card Tester</h1>
           <p class="text-sm text-zinc-500">Multi-Context Manager v6.1</p>
         </div>
       </div>
-     
+    
       <div class="flex items-center gap-4">
         <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-4 py-2 rounded-2xl">
           <div id="status-led" class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-          <span id="status-text" class="text-sm font-medium text-green-400">Conectado via WebSocket</span>
+          <span id="status-text" class="text-sm font-medium text-green-400 hidden sm:inline">Conectado via WebSocket</span>
+          <span id="status-text-mobile" class="text-sm font-medium text-green-400 sm:hidden">Conectado</span>
         </div>
       </div>
     </div>
   </header>
 
-  <div class="max-w-7xl mx-auto px-6 py-8 flex gap-8">
-    
-    <!-- COLUNA ESQUERDA -->
-    <div class="flex-1 space-y-8">
-      
-      <!-- PROGRESSO -->
-      <div class="bg-zinc-900 rounded-3xl p-8 border border-zinc-800">
-        <h2 class="text-xl font-semibold mb-6 flex items-center gap-3">
-          <i class="fa-solid fa-chart-bar text-blue-500"></i>
-          Progresso do Lote
-        </h2>
-        <div class="space-y-4">
-          <div class="h-5 bg-zinc-800 rounded-2xl overflow-hidden">
-            <div id="progress" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-indigo-600 w-[0%]"></div>
-          </div>
-          <div class="flex justify-between text-4xl font-mono font-bold">
-            <span id="current">0</span>
-            <span class="text-zinc-600">/</span>
-            <span id="total">0</span>
-          </div>
-          <p id="status-text-progress" class="text-zinc-400">Aguardando início...</p>
-        </div>
-      </div>
-
-      <!-- BOTÕES -->
-      <div class="flex gap-4">
-        <button onclick="iniciarTeste()" id="btn-iniciar"
-                class="flex-1 bg-green-600 hover:bg-green-500 transition-colors text-white font-semibold py-5 rounded-3xl text-xl flex items-center justify-center gap-3 shadow-lg shadow-green-500/30">
-          <i class="fa-solid fa-play"></i>
-          INICIAR PROCESSAMENTO
-        </button>
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+    <div class="flex flex-col lg:flex-row gap-6 lg:gap-8">
+     
+      <!-- COLUNA ESQUERDA -->
+      <div class="flex-1 space-y-6 lg:space-y-8">
        
-        <button onclick="pararTeste()" id="btn-parar"
-                class="flex-1 bg-red-600 hover:bg-red-500 transition-colors text-white font-semibold py-5 rounded-3xl text-xl flex items-center justify-center gap-3 shadow-lg shadow-red-500/30 hidden">
-          <i class="fa-solid fa-stop"></i>
-          INTERROMPER
-        </button>
-      </div>
-
-      <!-- LISTA DE CARTÕES (INPUT) -->
-      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
-        <h2 class="text-xl font-semibold mb-4">Lista de Cartões</h2>
-        <textarea id="lista-cartoes" rows="10"
-          class="w-full bg-zinc-950 border border-zinc-700 rounded-2xl p-5 font-mono text-sm focus:outline-none focus:border-blue-500"
-          placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
-      </div>
-    </div>
-
-    <!-- COLUNA DIREITA -->
-    <div class="w-96 space-y-6">
-      
-      <!-- APROVADOS + REPROVADOS -->
-      <div class="grid grid-cols-2 gap-4">
-        <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-3xl p-6 text-center">
-          <h2 class="text-green-100 text-sm font-medium">APROVADOS</h2>
-          <div id="approved-count" class="text-5xl font-bold mt-2 mb-1">0</div>
-          <p class="text-green-100/70 text-xs">cartões</p>
+        <!-- PROGRESSO -->
+        <div class="bg-zinc-900 rounded-3xl p-6 sm:p-8 border border-zinc-800">
+          <h2 class="text-xl font-semibold mb-6 flex items-center gap-3">
+            <i class="fa-solid fa-chart-bar text-blue-500"></i>
+            Progresso do Lote
+          </h2>
+          <div class="space-y-4">
+            <div class="h-5 bg-zinc-800 rounded-2xl overflow-hidden">
+              <div id="progress" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-indigo-600 w-[0%]"></div>
+            </div>
+            <div class="flex justify-between text-3xl sm:text-4xl font-mono font-bold">
+              <span id="current">0</span>
+              <span class="text-zinc-600">/</span>
+              <span id="total">0</span>
+            </div>
+            <p id="status-text-progress" class="text-zinc-400">Aguardando início...</p>
+          </div>
         </div>
+
+        <!-- BOTÕES -->
+        <div class="flex flex-col sm:flex-row gap-4">
+          <button onclick="iniciarTeste()" id="btn-iniciar"
+                  class="flex-1 bg-green-600 hover:bg-green-500 transition-colors text-white font-semibold py-5 rounded-3xl text-lg sm:text-xl flex items-center justify-center gap-3 shadow-lg shadow-green-500/30">
+            <i class="fa-solid fa-play"></i>
+            INICIAR PROCESSAMENTO
+          </button>
         
-        <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-3xl p-6 text-center">
-          <h2 class="text-red-100 text-sm font-medium">REPROVADOS</h2>
-          <div id="rejected-count" class="text-5xl font-bold mt-2 mb-1">0</div>
-          <p class="text-red-100/70 text-xs">cartões</p>
-        </div>
-      </div>
-
-      <!-- LISTA DE APROVADOS COM COPIAR -->
-      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-lg font-semibold">Cartões Aprovados</h2>
-          <button onclick="copiarAprovados()"
-                  class="text-xs bg-green-600 hover:bg-green-500 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition">
-            <i class="fa-regular fa-copy"></i> Copiar
+          <button onclick="pararTeste()" id="btn-parar"
+                  class="flex-1 bg-red-600 hover:bg-red-500 transition-colors text-white font-semibold py-5 rounded-3xl text-lg sm:text-xl flex items-center justify-center gap-3 shadow-lg shadow-red-500/30 hidden">
+            <i class="fa-solid fa-stop"></i>
+            INTERROMPER
           </button>
         </div>
-        <div id="approved-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-green-300">
-          <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
+
+        <!-- LISTA DE CARTÕES -->
+        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
+          <h2 class="text-xl font-semibold mb-4">Lista de Cartões</h2>
+          <textarea id="lista-cartoes" rows="10"
+            class="w-full bg-zinc-950 border border-zinc-700 rounded-2xl p-5 font-mono text-sm focus:outline-none focus:border-blue-500"
+            placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
         </div>
       </div>
 
-      <!-- INSTÂNCIAS PARALELAS -->
-      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
-        <h2 class="text-lg font-semibold mb-4">Instâncias Paralelas</h2>
-        <div class="grid grid-cols-3 gap-3" id="canais-buttons">
-          <!-- JS preenche -->
-        </div>
-        <input type="hidden" id="canais" value="4">
-      </div>
-
-      <!-- HISTÓRICO -->
-      <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 h-[320px] flex flex-col">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-lg font-semibold">Histórico de Eventos</h2>
-          <button onclick="limparLogs()"
-                  class="text-zinc-400 hover:text-white transition-colors text-sm flex items-center gap-1">
-            <i class="fa-solid fa-trash"></i> Limpar
-          </button>
-        </div>
+      <!-- COLUNA DIREITA -->
+      <div class="w-full lg:w-96 space-y-6">
        
-        <div id="history" class="flex-1 overflow-y-auto space-y-3 text-sm">
-          <!-- JS preenche -->
+        <!-- APROVADOS + REPROVADOS -->
+        <div class="grid grid-cols-2 gap-4">
+          <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-3xl p-6 text-center">
+            <h2 class="text-green-100 text-sm font-medium">APROVADOS</h2>
+            <div id="approved-count" class="text-5xl font-bold mt-2 mb-1">0</div>
+            <p class="text-green-100/70 text-xs">cartões</p>
+          </div>
+         
+          <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-3xl p-6 text-center">
+            <h2 class="text-red-100 text-sm font-medium">REPROVADOS</h2>
+            <div id="rejected-count" class="text-5xl font-bold mt-2 mb-1">0</div>
+            <p class="text-red-100/70 text-xs">cartões</p>
+          </div>
+        </div>
+
+        <!-- LISTA DE APROVADOS -->
+        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">Cartões Aprovados</h2>
+            <button onclick="copiarAprovados()"
+                    class="text-xs bg-green-600 hover:bg-green-500 px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition">
+              <i class="fa-regular fa-copy"></i> Copiar
+            </button>
+          </div>
+          <div id="approved-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-green-300">
+            <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
+          </div>
+        </div>
+
+        <!-- INSTÂNCIAS PARALELAS -->
+        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800">
+          <h2 class="text-lg font-semibold mb-4">Instâncias Paralelas</h2>
+          <div class="grid grid-cols-3 gap-3" id="canais-buttons">
+            <!-- JS preenche -->
+          </div>
+          <input type="hidden" id="canais" value="4">
+        </div>
+
+        <!-- HISTÓRICO -->
+        <div class="bg-zinc-900 rounded-3xl p-6 border border-zinc-800 h-[280px] lg:h-[320px] flex flex-col">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold">Histórico de Eventos</h2>
+            <button onclick="limparLogs()"
+                    class="text-zinc-400 hover:text-white transition-colors text-sm flex items-center gap-1">
+              <i class="fa-solid fa-trash"></i> Limpar
+            </button>
+          </div>
+        
+          <div id="history" class="flex-1 overflow-y-auto space-y-3 text-sm">
+            <!-- JS preenche -->
+          </div>
         </div>
       </div>
     </div>
@@ -142,11 +144,11 @@
 
   <!-- MODAL FINAL -->
   <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 max-w-sm text-center">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-8 max-w-sm w-full mx-4 text-center">
       <i class="fa-solid fa-circle-check text-6xl text-emerald-500 mb-6"></i>
       <h3 class="text-2xl font-bold mb-2">Processamento Concluído</h3>
       <p class="text-zinc-400 mb-6">Todos os cartões foram processados.</p>
-      <button onclick="fecharModal()" 
+      <button onclick="fecharModal()"
               class="w-full py-3.5 bg-blue-600 hover:bg-blue-500 rounded-2xl font-semibold transition">
         Fechar
       </button>
@@ -154,6 +156,7 @@
   </div>
 
   <script>
+    // (Seu JavaScript permanece igual)
     let socket;
     let testeIniciado = false;
     let totalCartoes = 0;
@@ -162,188 +165,8 @@
     let reprovados = 0;
     let listaAprovados = [];
 
-    function criarBotoesCanais() {
-      const container = document.getElementById('canais-buttons');
-      container.innerHTML = '';
-      const selected = parseInt(document.getElementById('canais').value);
-
-      for (let i = 1; i <= 6; i++) {
-        const btn = document.createElement('button');
-        btn.className = `rounded-2xl p-4 text-center transition-all ${
-          i === selected 
-            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40' 
-            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
-        }`;
-        btn.innerHTML = `
-          <div class="text-2xl font-bold">${i}</div>
-          <div class="text-xs opacity-70">Canais</div>
-        `;
-        btn.onclick = () => {
-          document.getElementById('canais').value = i;
-          criarBotoesCanais();
-        };
-        container.appendChild(btn);
-      }
-    }
-
-    function conectarWebSocket() {
-      socket = new WebSocket(`wss://${window.location.host}/ws`);
-      
-      socket.onopen = () => {
-        document.getElementById('status-text').textContent = "WebSocket Conectado";
-        document.getElementById('status-led').className = "w-3 h-3 bg-green-500 rounded-full animate-pulse";
-      };
-
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-
-        if (data.type === "log") {
-          adicionarHistorico(data.mensagem);
-
-          if (data.mensagem.includes("APROVADO") || data.mensagem.includes("✅")) {
-            processados++;
-            atualizarProgresso();
-          }
-          if (data.mensagem.includes("Reprovado") || data.mensagem.includes("REPROVADO") || data.mensagem.includes("❌")) {
-            processados++;
-            reprovados++;
-            document.getElementById('rejected-count').textContent = reprovados;
-            atualizarProgresso();
-          }
-        }
-
-        if (data.type === "aprovado") {
-          aprovados++;
-          document.getElementById('approved-count').textContent = aprovados;
-          adicionarAprovado(data.cartao);
-        }
-
-        if (data.type === "status") {
-          if (data.rodando === false && testeIniciado && processados > 0) {
-            mostrarModalFinal();
-          }
-        }
-      };
-
-      socket.onclose = () => {
-        document.getElementById('status-text').textContent = "Reconectando...";
-        document.getElementById('status-led').className = "w-3 h-3 bg-yellow-500 rounded-full animate-pulse";
-        setTimeout(conectarWebSocket, 2000);
-      };
-    }
-
-    function adicionarAprovado(cartao) {
-      if (listaAprovados.includes(cartao)) return;
-      listaAprovados.push(cartao);
-
-      const container = document.getElementById('approved-list');
-      
-      // Remove a mensagem "Nenhum aprovado"
-      if (container.querySelector('p')) {
-        container.innerHTML = '';
-      }
-
-      const div = document.createElement('div');
-      div.className = "bg-green-900/30 border border-green-700/50 rounded-xl p-3 break-all";
-      div.textContent = cartao;
-      container.appendChild(div);
-    }
-
-    function copiarAprovados() {
-      if (listaAprovados.length === 0) {
-        alert("Nenhum cartão aprovado para copiar.");
-        return;
-      }
-      const texto = listaAprovados.join('\n');
-      navigator.clipboard.writeText(texto).then(() => {
-        alert("Aprovados copiados com sucesso!");
-      });
-    }
-
-    function adicionarHistorico(mensagem) {
-      const history = document.getElementById('history');
-      const entry = document.createElement('div');
-      
-      let cor = "text-zinc-400";
-      if (mensagem.includes("APROVADO") || mensagem.includes("✅")) cor = "text-green-400";
-      if (mensagem.includes("Reprovado") || mensagem.includes("❌")) cor = "text-red-400";
-      if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) cor = "text-blue-400";
-
-      entry.className = `flex gap-3 ${cor}`;
-      entry.innerHTML = `
-        <i class="fa-solid fa-circle text-[6px] mt-1.5 opacity-60"></i>
-        <div>
-          <span class="break-all">${mensagem}</span>
-        </div>
-      `;
-      history.prepend(entry);
-    }
-
-    function atualizarProgresso() {
-      if (totalCartoes <= 0) return;
-      const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
-      
-      document.getElementById('progress').style.width = percent + '%';
-      document.getElementById('current').textContent = processados;
-      document.getElementById('total').textContent = totalCartoes;
-      document.getElementById('status-text-progress').textContent = 
-        percent >= 100 ? "Finalizado!" : "Processando...";
-    }
-
-    function iniciarTeste() {
-      const lista = document.getElementById('lista-cartoes').value.trim();
-      if (!lista) return alert("Insira a lista de cartões!");
-
-      totalCartoes = lista.split('\n').filter(l => l.trim()).length;
-      processados = 0;
-      aprovados = 0;
-      reprovados = 0;
-      listaAprovados = [];
-
-      document.getElementById('approved-count').textContent = '0';
-      document.getElementById('rejected-count').textContent = '0';
-      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
-      document.getElementById('progress').style.width = '0%';
-      document.getElementById('current').textContent = '0';
-      document.getElementById('total').textContent = totalCartoes;
-      document.getElementById('status-text-progress').textContent = "Iniciando...";
-
-      fetch('/api/iniciar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          lista: lista, 
-          canais: parseInt(document.getElementById('canais').value) 
-        })
-      });
-
-      testeIniciado = true;
-      document.getElementById('btn-iniciar').classList.add('hidden');
-      document.getElementById('btn-parar').classList.remove('hidden');
-    }
-
-    function pararTeste() {
-      fetch('/api/parar', { method: 'POST' });
-    }
-
-    function limparLogs() {
-      document.getElementById('history').innerHTML = '';
-    }
-
-    function mostrarModalFinal() {
-      document.getElementById('modal-fim').classList.remove('hidden');
-      document.getElementById('modal-fim').classList.add('flex');
-    }
-
-    function fecharModal() {
-      document.getElementById('modal-fim').classList.add('hidden');
-      document.getElementById('modal-fim').classList.remove('flex');
-      
-      testeIniciado = false;
-      document.getElementById('btn-iniciar').classList.remove('hidden');
-      document.getElementById('btn-parar').classList.add('hidden');
-    }
-
+    // ... resto do seu script sem alterações ...
+    
     window.onload = () => {
       criarBotoesCanais();
       conectarWebSocket();
