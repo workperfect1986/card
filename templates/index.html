@@ -10,13 +10,6 @@
     body { font-family: 'Inter', system-ui, sans-serif; }
     .progress-bar { transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
     textarea { resize: none; }
-    
-    /* Melhorias extras para mobile */
-    @media (max-width: 640px) {
-      .card-mobile {
-        border-radius: 1.25rem;
-      }
-    }
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
@@ -43,7 +36,6 @@
 
   <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
 
-    <!-- COLUNA PRINCIPAL (tudo empilha no mobile) -->
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
 
       <!-- ==================== ESQUERDA ==================== -->
@@ -114,6 +106,23 @@
           </div>
         </div>
 
+        <!-- INSTÂNCIAS PARALELAS (destacada) -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+            <i class="fa-solid fa-layer-group text-blue-500"></i>
+            Instâncias Paralelas
+          </h2>
+          
+          <div class="grid grid-cols-3 gap-2.5" id="canais-buttons">
+            <!-- JS preenche -->
+          </div>
+          <input type="hidden" id="canais" value="4">
+          
+          <p class="text-xs text-zinc-500 mt-3 text-center">
+            Quantidade de canais simultâneos
+          </p>
+        </div>
+
         <!-- LISTA DE APROVADOS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div class="flex justify-between items-center mb-3">
@@ -129,15 +138,6 @@
           </div>
         </div>
 
-        <!-- INSTÂNCIAS PARALELAS -->
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-          <h2 class="text-base font-semibold mb-3">Instâncias Paralelas</h2>
-          <div class="grid grid-cols-3 gap-2.5" id="canais-buttons">
-            <!-- JS preenche -->
-          </div>
-          <input type="hidden" id="canais" value="4">
-        </div>
-
         <!-- HISTÓRICO -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col" style="height: 280px;">
           <div class="flex justify-between items-center mb-3">
@@ -145,7 +145,6 @@
             <button onclick="limparLogs()"
                     class="text-zinc-400 active:text-white hover:text-white transition-colors text-sm flex items-center gap-1">
               <i class="fa-solid fa-trash"></i>
-              <span class="hidden sm:inline">Limpar</span>
             </button>
           </div>
         
@@ -183,16 +182,17 @@
       const container = document.getElementById('canais-buttons');
       container.innerHTML = '';
       const selected = parseInt(document.getElementById('canais').value);
+      
       for (let i = 1; i <= 6; i++) {
         const btn = document.createElement('button');
-        btn.className = `rounded-xl p-3 text-center transition-all ${
+        btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
           i === selected
             ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40'
-            : 'bg-zinc-800 active:bg-zinc-700 hover:bg-zinc-700 text-zinc-300'
+            : 'bg-zinc-800 active:bg-zinc-700 text-zinc-300'
         }`;
         btn.innerHTML = `
-          <div class="text-xl font-bold">${i}</div>
-          <div class="text-[10px] opacity-70">Canais</div>
+          <div class="text-2xl font-bold leading-none">${i}</div>
+          <div class="text-[11px] mt-1 opacity-70">canais</div>
         `;
         btn.onclick = () => {
           document.getElementById('canais').value = i;
