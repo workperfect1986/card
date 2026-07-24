@@ -13,7 +13,6 @@
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
-
   <!-- HEADER -->
   <header class="border-b border-zinc-800 bg-zinc-900 sticky top-0 z-50">
     <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
@@ -24,7 +23,7 @@
           <p class="text-xs text-zinc-500">Multi-Context Manager v6.1</p>
         </div>
       </div>
-    
+   
       <div class="flex items-center gap-2 shrink-0">
         <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full">
           <div id="status-led" class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
@@ -33,10 +32,8 @@
       </div>
     </div>
   </header>
-
   <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
-
       <!-- ESQUERDA -->
       <div class="flex-1 space-y-5">
         <!-- PROGRESSO -->
@@ -59,7 +56,6 @@
             </div>
           </div>
         </div>
-
         <!-- BOTÕES -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button onclick="iniciarTeste()" id="btn-iniciar"
@@ -73,7 +69,6 @@
             INTERROMPER
           </button>
         </div>
-
         <!-- LISTA DE CARTÕES -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-lg font-semibold mb-3">Lista de Cartões</h2>
@@ -82,7 +77,6 @@
             placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
         </div>
       </div>
-
       <!-- DIREITA -->
       <div class="w-full lg:w-96 space-y-5">
         <!-- APROVADOS + REPROVADOS -->
@@ -98,7 +92,6 @@
             <p class="text-red-100/70 text-xs">cartões</p>
           </div>
         </div>
-
         <!-- INSTÂNCIAS PARALELAS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
@@ -109,7 +102,6 @@
           <input type="hidden" id="canais" value="4">
           <p class="text-xs text-zinc-500 mt-3 text-center">Quantidade de canais simultâneos</p>
         </div>
-
         <!-- LISTA DE APROVADOS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div class="flex justify-between items-center mb-3">
@@ -124,7 +116,20 @@
             <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
           </div>
         </div>
-
+        <!-- LISTA DE REPROVADOS -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-base font-semibold">Cartões Reprovados</h2>
+            <button onclick="copiarReprovados()"
+                    class="text-xs bg-red-600 active:bg-red-700 hover:bg-red-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+              <i class="fa-regular fa-copy"></i>
+              <span>Copiar</span>
+            </button>
+          </div>
+          <div id="rejected-list" class="space-y-2 max-h-40 overflow-y-auto font-mono text-xs text-red-300">
+            <p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>
+          </div>
+        </div>
         <!-- HISTÓRICO -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col" style="height: 280px;">
           <div class="flex justify-between items-center mb-3">
@@ -139,7 +144,6 @@
       </div>
     </div>
   </div>
-
   <!-- MODAL -->
   <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50 p-4">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-sm text-center">
@@ -151,7 +155,6 @@
       </button>
     </div>
   </div>
-
   <script>
     // ==================== ESTADO ====================
     let socket = null;
@@ -161,20 +164,21 @@
     let aprovados = 0;
     let reprovados = 0;
     let listaAprovados = [];
-    
+    let listaReprovados = [];
+   
     // Controle de performance
     let reconnectAttempts = 0;
     let progressUpdatePending = false;
     let lastProgressUpdate = 0;
-    const MAX_HISTORY = 120;          // Limite de mensagens no histórico
-    const PROGRESS_THROTTLE = 80;     // ms entre atualizações de progresso
+    const MAX_HISTORY = 120;
+    const PROGRESS_THROTTLE = 80;
 
     // ==================== BOTÕES DE CANAIS ====================
     function criarBotoesCanais() {
       const container = document.getElementById('canais-buttons');
       container.innerHTML = '';
       const selected = parseInt(document.getElementById('canais').value);
-      
+     
       for (let i = 1; i <= 6; i++) {
         const btn = document.createElement('button');
         btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
@@ -196,11 +200,9 @@
 
     // ==================== WEBSOCKET OTIMIZADO ====================
     function conectarWebSocket() {
-      // Evita múltiplas conexões
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return;
       }
-
       try {
         socket = new WebSocket(`wss://${window.location.host}/ws`);
       } catch (err) {
@@ -208,21 +210,18 @@
         agendarReconexao();
         return;
       }
-
       socket.onopen = () => {
         reconnectAttempts = 0;
         document.getElementById('status-text').textContent = "Online";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse";
       };
-
       socket.onmessage = (event) => {
         let data;
         try {
           data = JSON.parse(event.data);
         } catch (e) {
-          return; // ignora mensagens inválidas
+          return;
         }
-
         switch (data.type) {
           case "log":
             handleLog(data.mensagem);
@@ -237,21 +236,16 @@
             break;
         }
       };
-
       socket.onclose = () => {
         document.getElementById('status-text').textContent = "Reconectando...";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse";
         agendarReconexao();
       };
-
-      socket.onerror = () => {
-        // onclose será chamado logo em seguida
-      };
+      socket.onerror = () => {};
     }
 
     function agendarReconexao() {
       reconnectAttempts++;
-      // Backoff exponencial: 1s, 2s, 4s, 8s... máximo 15s
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 15000);
       setTimeout(conectarWebSocket, delay);
     }
@@ -265,21 +259,26 @@
 
       if (isAprovado || isReprovado) {
         processados++;
-        
+       
         if (isReprovado) {
           reprovados++;
-          // Atualiza contador de reprovados imediatamente (é leve)
           document.getElementById('rejected-count').textContent = reprovados;
+
+          // Extrai o cartão do log (formato: 4111...|12|2028|123)
+          const match = mensagem.match(/(\d{13,19}\|\d{1,2}\|\d{2,4}\|\d{3,4})/);
+          if (match && !listaReprovados.includes(match[1])) {
+            listaReprovados.push(match[1]);
+            adicionarReprovadoDOM(match[1]);
+          }
         }
-        
-        // Throttle da atualização de progresso
+       
         scheduleProgressUpdate();
       }
     }
 
     function handleAprovado(cartao) {
       if (listaAprovados.includes(cartao)) return;
-      
+     
       listaAprovados.push(cartao);
       aprovados++;
       document.getElementById('approved-count').textContent = aprovados;
@@ -289,8 +288,7 @@
     // ==================== DOM OTIMIZADO ====================
     function adicionarHistorico(mensagem) {
       const history = document.getElementById('history');
-      
-      // Limita o tamanho do histórico (remove as mais antigas)
+     
       while (history.children.length >= MAX_HISTORY) {
         history.removeChild(history.lastChild);
       }
@@ -308,15 +306,12 @@
           <span class="break-all text-[13px] leading-snug">${mensagem}</span>
         </div>
       `;
-      
-      // Prepend é mais caro, mas necessário para mostrar o mais recente no topo
+     
       history.insertBefore(entry, history.firstChild);
     }
 
     function adicionarAprovadoDOM(cartao) {
       const container = document.getElementById('approved-list');
-     
-      // Remove placeholder se existir
       const placeholder = container.querySelector('p');
       if (placeholder) placeholder.remove();
 
@@ -326,9 +321,20 @@
       container.appendChild(div);
     }
 
+    function adicionarReprovadoDOM(cartao) {
+      const container = document.getElementById('rejected-list');
+      const placeholder = container.querySelector('p');
+      if (placeholder) placeholder.remove();
+
+      const div = document.createElement('div');
+      div.className = "bg-red-900/30 border border-red-700/50 rounded-lg p-2.5 break-all";
+      div.textContent = cartao;
+      container.appendChild(div);
+    }
+
     function scheduleProgressUpdate() {
       if (progressUpdatePending) return;
-      
+     
       const now = performance.now();
       const timeSinceLast = now - lastProgressUpdate;
 
@@ -347,9 +353,9 @@
 
     function atualizarProgresso() {
       if (totalCartoes <= 0) return;
-      
-      const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
      
+      const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
+    
       document.getElementById('progress').style.width = percent + '%';
       document.getElementById('current').textContent = processados;
       document.getElementById('total').textContent = totalCartoes;
@@ -368,6 +374,16 @@
       });
     }
 
+    function copiarReprovados() {
+      if (listaReprovados.length === 0) {
+        alert("Nenhum cartão reprovado para copiar.");
+        return;
+      }
+      navigator.clipboard.writeText(listaReprovados.join('\n')).then(() => {
+        alert("Reprovados copiados com sucesso!");
+      });
+    }
+
     function limparLogs() {
       document.getElementById('history').innerHTML = '';
     }
@@ -375,22 +391,24 @@
     function iniciarTeste() {
       const lista = document.getElementById('lista-cartoes').value.trim();
       if (!lista) return alert("Insira a lista de cartões!");
-      
+     
       totalCartoes = lista.split('\n').filter(l => l.trim()).length;
       processados = 0;
       aprovados = 0;
       reprovados = 0;
       listaAprovados = [];
-      
+      listaReprovados = [];
+     
       document.getElementById('approved-count').textContent = '0';
       document.getElementById('rejected-count').textContent = '0';
       document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
+      document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>';
       document.getElementById('progress').style.width = '0%';
       document.getElementById('current').textContent = '0';
       document.getElementById('total').textContent = totalCartoes;
       document.getElementById('status-text-progress').textContent = "Iniciando...";
       document.getElementById('history').innerHTML = '';
-      
+     
       fetch('/api/iniciar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -399,7 +417,7 @@
           canais: parseInt(document.getElementById('canais').value)
         })
       });
-      
+     
       testeIniciado = true;
       document.getElementById('btn-iniciar').classList.add('hidden');
       document.getElementById('btn-parar').classList.remove('hidden');
@@ -417,7 +435,7 @@
     function fecharModal() {
       document.getElementById('modal-fim').classList.add('hidden');
       document.getElementById('modal-fim').classList.remove('flex');
-     
+    
       testeIniciado = false;
       document.getElementById('btn-iniciar').classList.remove('hidden');
       document.getElementById('btn-parar').classList.add('hidden');
@@ -429,10 +447,9 @@
       conectarWebSocket();
     };
 
-    // Cleanup ao sair da página
     window.addEventListener('beforeunload', () => {
       if (socket) {
-        socket.onclose = null; // evita reconexão
+        socket.onclose = null;
         socket.close();
       }
     });
