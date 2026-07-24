@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Unimar Card Tester • v6.2</title>
+  <title>Unimar Card Tester • v6.3</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
   <style>
@@ -15,11 +15,15 @@
     ::-webkit-scrollbar-track { background: #18181b; }
     ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+    /* Glow effects do Kimi */
+    .glow-green { box-shadow: 0 0 20px rgba(16, 185, 129, 0.35); }
+    .glow-red { box-shadow: 0 0 20px rgba(244, 63, 94, 0.35); }
+    .glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.25); }
     /* Animações */
     @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
-    @keyframes pulse-green { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); } }
-    @keyframes pulse-red { 0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); } }
+    @keyframes pulse-green { 0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } }
+    @keyframes pulse-red { 0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(244, 63, 94, 0); } }
     .animate-fade-in { animation: fadeIn 0.3s ease-out; }
     .animate-slide-in { animation: slideIn 0.2s ease-out; }
     .pulse-green { animation: pulse-green 2s infinite; }
@@ -28,14 +32,15 @@
     .log-entry { animation: fadeIn 0.15s ease-out; }
     /* Toast */
     .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 100; display: flex; flex-direction: column; gap: 8px; }
-    .toast { background: #27272a; border: 1px solid #3f3f46; border-radius: 12px; padding: 12px 16px; 
+    .toast { background: #27272a; border: 1px solid #3f3f46; border-radius: 12px; padding: 12px 16px;
              box-shadow: 0 10px 40px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 10px;
              animation: fadeIn 0.3s ease-out; min-width: 240px; }
-    .toast-success { border-left: 3px solid #22c55e; }
+    .toast-success { border-left: 3px solid #10b981; }
     .toast-error { border-left: 3px solid #ef4444; }
     .toast-info { border-left: 3px solid #3b82f6; }
     .toast-exit { animation: fadeIn 0.3s ease-out reverse forwards; }
   </style>
+<base target="_blank">
 <base target="_blank">
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
@@ -49,14 +54,19 @@
         <i class="fa-solid fa-credit-card text-2xl text-blue-500 shrink-0"></i>
         <div class="min-w-0">
           <h1 class="text-lg font-bold tracking-tight truncate">Unimar Card Tester</h1>
-          <p class="text-xs text-zinc-500">Multi-Context Manager v6.2</p>
+          <p class="text-xs text-zinc-500">Multi-Context Manager v6.3</p>
         </div>
       </div>
 
       <div class="flex items-center gap-2 shrink-0">
+        <!-- Badge de canais ativos (do Kimi) -->
+        <div id="canais-badge" class="hidden items-center gap-1.5 bg-indigo-600/20 border border-indigo-500/30 px-3 py-1.5 rounded-full">
+          <i class="fa-solid fa-bolt text-indigo-400 text-[10px]"></i>
+          <span id="canais-text" class="text-xs font-semibold text-indigo-300">0 ativos</span>
+        </div>
         <!-- Velocidade -->
         <div class="hidden sm:flex items-center gap-1.5 bg-zinc-800 px-3 py-1.5 rounded-full">
-          <i class="fa-solid fa-bolt text-yellow-500 text-xs"></i>
+          <i class="fa-solid fa-gauge-high text-yellow-500 text-xs"></i>
           <span id="velocidade" class="text-xs font-mono text-zinc-300">0/min</span>
         </div>
         <!-- Status -->
@@ -72,7 +82,7 @@
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
       <!-- ESQUERDA -->
       <div class="flex-1 space-y-5">
-        <!-- PROGRESSO -->
+        <!-- PROGRESSO + STATS (Git base + Kimi stats) -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <i class="fa-solid fa-chart-bar text-blue-500"></i>
@@ -93,6 +103,21 @@
                 <p id="status-text-progress" class="text-sm text-zinc-400">Aguardando início...</p>
                 <p id="eta-text" class="text-xs text-zinc-600 mt-0.5 font-mono">--:--</p>
               </div>
+            </div>
+          </div>
+          <!-- Stats em tempo real (do Kimi) -->
+          <div class="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-zinc-800">
+            <div class="text-center">
+              <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Tempo</p>
+              <p id="stat-tempo" class="text-lg font-mono font-bold text-zinc-200">00:00</p>
+            </div>
+            <div class="text-center">
+              <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Velocidade</p>
+              <p id="stat-velocidade" class="text-lg font-mono font-bold text-blue-400">0 <span class="text-xs text-zinc-500">/min</span></p>
+            </div>
+            <div class="text-center">
+              <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Taxa Aprovação</p>
+              <p id="stat-taxa" class="text-lg font-mono font-bold text-emerald-400">0%</p>
             </div>
           </div>
         </div>
@@ -135,23 +160,23 @@
 
       <!-- DIREITA -->
       <div class="w-full lg:w-96 space-y-5">
-        <!-- APROVADOS + REPROVADOS -->
+        <!-- APROVADOS + REPROVADOS (cores emerald/rose + glow do Kimi) -->
         <div class="grid grid-cols-2 gap-3">
-          <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-2xl p-4 text-center relative overflow-hidden">
+          <div class="bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl p-4 text-center relative overflow-hidden glow-green transition-all hover:scale-[1.02]">
             <div class="absolute top-2 right-2 opacity-20">
               <i class="fa-solid fa-check-circle text-4xl"></i>
             </div>
-            <h2 class="text-green-100 text-xs font-medium tracking-wide">APROVADOS</h2>
-            <div id="approved-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
-            <p class="text-green-100/70 text-xs">cartões</p>
+            <h2 class="text-emerald-50 text-[10px] font-bold tracking-widest uppercase">Aprovados</h2>
+            <div id="approved-count" class="text-4xl font-black mt-1 mb-0.5 drop-shadow-lg">0</div>
+            <p class="text-emerald-100/70 text-[11px] font-medium">cartões</p>
           </div>
-          <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-2xl p-4 text-center relative overflow-hidden">
+          <div class="bg-gradient-to-br from-rose-500 to-red-600 rounded-2xl p-4 text-center relative overflow-hidden glow-red transition-all hover:scale-[1.02]">
             <div class="absolute top-2 right-2 opacity-20">
               <i class="fa-solid fa-xmark-circle text-4xl"></i>
             </div>
-            <h2 class="text-red-100 text-xs font-medium tracking-wide">REPROVADOS</h2>
-            <div id="rejected-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
-            <p class="text-red-100/70 text-xs">cartões</p>
+            <h2 class="text-rose-50 text-[10px] font-bold tracking-widest uppercase">Reprovados</h2>
+            <div id="rejected-count" class="text-4xl font-black mt-1 mb-0.5 drop-shadow-lg">0</div>
+            <p class="text-rose-100/70 text-[11px] font-medium">cartões</p>
           </div>
         </div>
 
@@ -171,12 +196,12 @@
           <div class="flex justify-between items-center mb-3">
             <h2 class="text-base font-semibold">Cartões Aprovados</h2>
             <button onclick="copiarAprovados()"
-                    class="text-xs bg-green-600 active:bg-green-700 hover:bg-green-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95">
+                    class="text-xs bg-emerald-600 active:bg-emerald-700 hover:bg-emerald-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-emerald-500/20">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
           </div>
-          <div id="approved-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-green-300">
+          <div id="approved-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-emerald-300">
             <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
           </div>
         </div>
@@ -186,12 +211,12 @@
           <div class="flex justify-between items-center mb-3">
             <h2 class="text-base font-semibold">Cartões Reprovados</h2>
             <button onclick="copiarReprovados()"
-                    class="text-xs bg-red-600 active:bg-red-700 hover:bg-red-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95">
+                    class="text-xs bg-rose-600 active:bg-rose-700 hover:bg-rose-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-rose-500/20">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
           </div>
-          <div id="rejected-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-red-300">
+          <div id="rejected-list" class="space-y-2 max-h-48 overflow-y-auto font-mono text-xs text-rose-300">
             <p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>
           </div>
         </div>
@@ -225,12 +250,12 @@
           <span id="modal-total" class="font-mono font-bold">0</span>
         </div>
         <div class="flex justify-between text-sm">
-          <span class="text-green-400">Aprovados:</span>
-          <span id="modal-aprovados" class="font-mono font-bold text-green-400">0</span>
+          <span class="text-emerald-400">Aprovados:</span>
+          <span id="modal-aprovados" class="font-mono font-bold text-emerald-400">0</span>
         </div>
         <div class="flex justify-between text-sm">
-          <span class="text-red-400">Reprovados:</span>
-          <span id="modal-reprovados" class="font-mono font-bold text-red-400">0</span>
+          <span class="text-rose-400">Reprovados:</span>
+          <span id="modal-reprovados" class="font-mono font-bold text-rose-400">0</span>
         </div>
         <div class="flex justify-between text-sm border-t border-zinc-700 pt-2 mt-2">
           <span class="text-zinc-400">Taxa de aprovação:</span>
@@ -254,6 +279,7 @@
     let listaAprovados = [];
     let listaReprovados = [];
     let startTime = null;
+    let timerInterval = null;
 
     // Controle de performance
     let reconnectAttempts = 0;
@@ -266,7 +292,7 @@
     function showToast(message, type = 'info', duration = 3000) {
       const container = document.getElementById('toast-container');
       const toast = document.createElement('div');
-      const icons = { success: 'fa-check-circle text-green-400', error: 'fa-circle-xmark text-red-400', info: 'fa-circle-info text-blue-400' };
+      const icons = { success: 'fa-check-circle text-emerald-400', error: 'fa-circle-xmark text-red-400', info: 'fa-circle-info text-blue-400' };
       toast.className = `toast toast-${type}`;
       toast.innerHTML = `
         <i class="fa-solid ${icons[type]}"></i>
@@ -277,6 +303,27 @@
         toast.classList.add('toast-exit');
         setTimeout(() => toast.remove(), 300);
       }, duration);
+    }
+
+    // ==================== TIMER LOCAL ====================
+    function formatarTempo(segundos) {
+      const m = Math.floor(segundos / 60).toString().padStart(2, '0');
+      const s = (segundos % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    function iniciarTimer() {
+      pararTimer();
+      let segundos = 0;
+      document.getElementById('stat-tempo').textContent = "00:00";
+      timerInterval = setInterval(() => {
+        segundos++;
+        document.getElementById('stat-tempo').textContent = formatarTempo(segundos);
+      }, 1000);
+    }
+
+    function pararTimer() {
+      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
     }
 
     // ==================== CONTADOR DE CARTÕES ====================
@@ -304,7 +351,7 @@
         const btn = document.createElement('button');
         btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
           i === selected
-            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40'
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40 glow-blue'
             : 'bg-zinc-800 active:bg-zinc-700 text-zinc-300 hover:bg-zinc-700'
         }`;
         btn.innerHTML = `
@@ -347,6 +394,12 @@
           return;
         }
 
+        // Heartbeat
+        if (data.type === "ping") {
+          socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+
         switch (data.type) {
           case "log":
             handleLog(data.mensagem);
@@ -361,9 +414,7 @@
             handleProgresso(data);
             break;
           case "status":
-            if (data.rodando === false && testeIniciado && processados > 0) {
-              mostrarModalFinal();
-            }
+            handleStatus(data);
             break;
         }
       };
@@ -384,6 +435,28 @@
     }
 
     // ==================== HANDLERS ====================
+    function handleStatus(data) {
+      // Badge de canais ativos (do Kimi)
+      if (data.canais_ativos !== undefined) {
+        const badge = document.getElementById('canais-badge');
+        const txt = document.getElementById('canais-text');
+        if (data.canais_ativos > 0) {
+          badge.classList.remove('hidden');
+          badge.classList.add('flex');
+          txt.textContent = data.canais_ativos + (data.canais_ativos === 1 ? ' ativo' : ' ativos');
+        } else {
+          badge.classList.add('hidden');
+          badge.classList.remove('flex');
+        }
+      }
+
+      // Modal só se realmente terminou (do Kimi)
+      if (data.rodando === false && testeIniciado && processados > 0 && processados >= totalCartoes) {
+        mostrarModalFinal();
+        pararTimer();
+      }
+    }
+
     function handleLog(mensagem) {
       adicionarHistorico(mensagem);
 
@@ -408,6 +481,8 @@
       const counter = document.getElementById('approved-count').parentElement;
       counter.classList.add('pulse-green');
       setTimeout(() => counter.classList.remove('pulse-green'), 2000);
+
+      atualizarStats({ aprovados, processados });
     }
 
     function handleReprovado(cartao) {
@@ -429,6 +504,21 @@
         processados = data.processados;
         scheduleProgressUpdate();
       }
+      if (data.velocidade !== undefined) {
+        document.getElementById('velocidade').textContent = data.velocidade + '/min';
+        document.getElementById('stat-velocidade').innerHTML = `${data.velocidade} <span class="text-xs text-zinc-500">/min</span>`;
+      }
+      if (data.tempo !== undefined) {
+        document.getElementById('stat-tempo').textContent = formatarTempo(data.tempo);
+      }
+      atualizarStats(data);
+    }
+
+    function atualizarStats(data) {
+      if (data.aprovados !== undefined && data.processados !== undefined && data.processados > 0) {
+        const taxa = Math.round((data.aprovados / data.processados) * 100);
+        document.getElementById('stat-taxa').textContent = taxa + '%';
+      }
     }
 
     // ==================== DOM ====================
@@ -441,24 +531,24 @@
 
       let cor = "text-zinc-400";
       let icon = "fa-circle";
-      if (mensagem.includes("APROVADO") || mensagem.includes("✅")) { 
-        cor = "text-green-400"; 
+      if (mensagem.includes("APROVADO") || mensagem.includes("✅")) {
+        cor = "text-emerald-400";
         icon = "fa-check";
       }
-      else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) { 
-        cor = "text-red-400"; 
+      else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) {
+        cor = "text-rose-400";
         icon = "fa-xmark";
       }
-      else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) { 
-        cor = "text-blue-400"; 
+      else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) {
+        cor = "text-blue-400";
         icon = "fa-broom";
       }
-      else if (mensagem.includes("Autenticação")) { 
-        cor = "text-yellow-400"; 
+      else if (mensagem.includes("Autenticação")) {
+        cor = "text-yellow-400";
         icon = "fa-lock";
       }
-      else if (mensagem.includes("Canal")) { 
-        cor = "text-purple-400"; 
+      else if (mensagem.includes("Canal")) {
+        cor = "text-purple-400";
         icon = "fa-server";
       }
 
@@ -472,8 +562,6 @@
       `;
 
       history.insertBefore(entry, history.firstChild);
-
-      // Atualizar contador de logs
       document.getElementById('log-count').textContent = history.children.length + ' logs';
     }
 
@@ -483,7 +571,7 @@
       if (placeholder) placeholder.remove();
 
       const div = document.createElement('div');
-      div.className = "card-entry bg-green-900/30 border border-green-700/50 rounded-lg p-2.5 break-all hover:bg-green-900/50 transition-colors cursor-pointer";
+      div.className = "card-entry bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-2.5 break-all text-emerald-300 font-semibold hover:bg-emerald-500/20 transition-colors cursor-pointer";
       div.textContent = cartao;
       div.title = "Clique para copiar";
       div.onclick = () => {
@@ -500,7 +588,7 @@
       if (placeholder) placeholder.remove();
 
       const div = document.createElement('div');
-      div.className = "card-entry bg-red-900/30 border border-red-700/50 rounded-lg p-2.5 break-all hover:bg-red-900/50 transition-colors cursor-pointer";
+      div.className = "card-entry bg-rose-500/10 border border-rose-500/30 rounded-lg p-2.5 break-all text-rose-300 hover:bg-rose-500/20 transition-colors cursor-pointer";
       div.textContent = cartao;
       div.title = "Clique para copiar";
       div.onclick = () => {
@@ -550,13 +638,8 @@
         const mins = Math.floor(remaining / 60);
         const secs = Math.floor(remaining % 60);
         document.getElementById('eta-text').textContent = `~${mins}m ${secs}s restantes`;
-
-        // Velocidade
-        const perMin = Math.round(rate * 60);
-        document.getElementById('velocidade').textContent = perMin + '/min';
       } else if (percent >= 100) {
         document.getElementById('eta-text').textContent = 'Concluído';
-        document.getElementById('velocidade').textContent = '0/min';
       }
     }
 
@@ -619,6 +702,8 @@
       document.getElementById('eta-text').textContent = 'Calculando...';
       document.getElementById('history').innerHTML = '';
       document.getElementById('log-count').textContent = '0 logs';
+      document.getElementById('stat-taxa').textContent = '0%';
+      document.getElementById('stat-velocidade').innerHTML = '0 <span class="text-xs text-zinc-500">/min</span>';
 
       fetch('/api/iniciar', {
         method: 'POST',
@@ -638,6 +723,7 @@
       testeIniciado = true;
       document.getElementById('btn-iniciar').classList.add('hidden');
       document.getElementById('btn-parar').classList.remove('hidden');
+      iniciarTimer();
       showToast(`Iniciando teste com ${totalCartoes} cartões...`, 'info');
     }
 
@@ -665,6 +751,8 @@
       testeIniciado = false;
       document.getElementById('btn-iniciar').classList.remove('hidden');
       document.getElementById('btn-parar').classList.add('hidden');
+      document.getElementById('canais-badge').classList.add('hidden');
+      document.getElementById('canais-badge').classList.remove('flex');
       startTime = null;
     }
 
