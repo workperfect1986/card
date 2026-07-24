@@ -3,13 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Unimar Card Tester • v6.1</title>
+  <title>Unimar Card Tester • v6.2</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; }
     .progress-bar { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
     textarea { resize: none; }
+    /* Scrollbar customizada fina */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
   </style>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
@@ -20,12 +25,11 @@
         <i class="fa-solid fa-credit-card text-2xl text-blue-500 shrink-0"></i>
         <div class="min-w-0">
           <h1 class="text-lg font-bold tracking-tight truncate">Unimar Card Tester</h1>
-          <p class="text-xs text-zinc-500">Multi-Context Manager v6.1</p>
+          <p class="text-xs text-zinc-500">High-Performance Engine v6.2</p>
         </div>
       </div>
-   
       <div class="flex items-center gap-2 shrink-0">
-        <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full">
+        <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full border border-zinc-700">
           <div id="status-led" class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
           <span id="status-text" class="text-xs font-medium text-green-400">Online</span>
         </div>
@@ -35,155 +39,170 @@
 
   <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
-      <!-- ESQUERDA -->
+      <!-- ESQUERDA: CONTROLE E INPUT -->
       <div class="flex-1 space-y-5">
+        
         <!-- PROGRESSO -->
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 shadow-xl shadow-black/20">
           <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <i class="fa-solid fa-chart-bar text-blue-500"></i>
             Progresso do Lote
           </h2>
           <div class="space-y-3">
-            <div class="h-4 bg-zinc-800 rounded-full overflow-hidden">
-              <div id="progress" class="progress-bar h-full bg-gradient-to-r from-blue-500 to-indigo-600 w-[0%]"></div>
+            <div class="h-4 bg-zinc-800 rounded-full overflow-hidden relative">
+              <div id="progress" class="progress-bar h-full bg-gradient-to-r from-blue-600 to-indigo-600 w-[0%]"></div>
             </div>
             <div class="flex justify-between items-end">
-              <div class="text-3xl font-mono font-bold">
+              <div class="text-3xl font-mono font-bold tracking-tight">
                 <span id="current">0</span>
-                <span class="text-zinc-600 text-2xl">/</span>
+                <span class="text-zinc-600 text-2xl mx-1">/</span>
                 <span id="total" class="text-zinc-400">0</span>
               </div>
-              <p id="status-text-progress" class="text-sm text-zinc-400">Aguardando início...</p>
+              <p id="status-text-progress" class="text-sm text-zinc-400 font-medium">Aguardando início...</p>
             </div>
           </div>
         </div>
 
-        <!-- BOTÕES -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <!-- BOTÕES DE AÇÃO -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <button onclick="iniciarTeste()" id="btn-iniciar"
-                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-colors text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20">
+                  class="bg-green-600 hover:bg-green-500 active:scale-[0.98] transition-all text-white font-bold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-900/20 border border-green-500/20">
             <i class="fa-solid fa-play"></i>
-            INICIAR
+            INICIAR TESTE
           </button>
           <button onclick="pararTeste()" id="btn-parar"
-                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-colors text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 hidden">
+                  class="bg-red-600 hover:bg-red-500 active:scale-[0.98] transition-all text-white font-bold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-900/20 border border-red-500/20 hidden">
             <i class="fa-solid fa-stop"></i>
             INTERROMPER
           </button>
         </div>
 
-        <!-- LISTA DE CARTÕES -->
+        <!-- INPUT DE CARTÕES -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-          <h2 class="text-lg font-semibold mb-3">Lista de Cartões</h2>
-          <textarea id="lista-cartoes" rows="8"
-            class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 font-mono text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-            placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
+          <div class="flex justify-between items-center mb-3">
+             <h2 class="text-lg font-semibold">Entrada de Dados</h2>
+             <span class="text-xs text-zinc-500 bg-zinc-800 px-2 py-1 rounded">CC|MM|YYYY|CVV</span>
+          </div>
+          <textarea id="lista-cartoes" rows="10"
+            class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 font-mono text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors placeholder-zinc-600"
+            placeholder="4111111111111111|12|2028|123"></textarea>
         </div>
       </div>
 
-      <!-- DIREITA -->
+      <!-- DIREITA: RESULTADOS E LOGS -->
       <div class="w-full lg:w-96 space-y-5">
-        <!-- APROVADOS + REPROVADOS -->
+        
+        <!-- CONTADORES GERAIS -->
         <div class="grid grid-cols-2 gap-3">
-          <div class="bg-gradient-to-br from-green-600 to-emerald-600 rounded-2xl p-4 text-center">
-            <h2 class="text-green-100 text-xs font-medium tracking-wide">APROVADOS</h2>
-            <div id="approved-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
-            <p class="text-green-100/70 text-xs">cartões</p>
+          <div class="bg-gradient-to-br from-green-600 to-emerald-700 rounded-2xl p-4 text-center border border-green-500/20 shadow-lg">
+            <h2 class="text-green-100 text-xs font-bold tracking-wider uppercase mb-1">Aprovados</h2>
+            <div id="approved-count" class="text-4xl font-bold text-white">0</div>
           </div>
-          <div class="bg-gradient-to-br from-red-600 to-rose-600 rounded-2xl p-4 text-center">
-            <h2 class="text-red-100 text-xs font-medium tracking-wide">REPROVADOS</h2>
-            <div id="rejected-count" class="text-4xl font-bold mt-1 mb-0.5">0</div>
-            <p class="text-red-100/70 text-xs">cartões</p>
+          <div class="bg-gradient-to-br from-red-600 to-rose-700 rounded-2xl p-4 text-center border border-red-500/20 shadow-lg">
+            <h2 class="text-red-100 text-xs font-bold tracking-wider uppercase mb-1">Reprovados</h2>
+            <div id="rejected-count" class="text-4xl font-bold text-white">0</div>
           </div>
         </div>
 
-        <!-- INSTÂNCIAS PARALELAS -->
+        <!-- CONFIGURAÇÃO DE THREADS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
             <i class="fa-solid fa-layer-group text-blue-500"></i>
-            Instâncias Paralelas
+            Threads Paralelas
           </h2>
-          <div class="grid grid-cols-3 gap-2.5" id="canais-buttons"></div>
+          <div class="grid grid-cols-6 gap-2" id="canais-buttons"></div>
           <input type="hidden" id="canais" value="4">
-          <p class="text-xs text-zinc-500 mt-3 text-center">Quantidade de canais simultâneos</p>
         </div>
 
-        <!-- LISTA DE APROVADOS -->
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-          <div class="flex justify-between items-center mb-3">
-            <h2 class="text-base font-semibold">Cartões Aprovados</h2>
+        <!-- LISTA DE APROVADOS (HITS) -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col h-[250px]">
+          <div class="flex justify-between items-center mb-3 shrink-0">
+            <h2 class="text-base font-semibold text-green-400">Hits (Aprovados)</h2>
             <button onclick="copiarAprovados()"
-                    class="text-xs bg-green-600 active:bg-green-700 hover:bg-green-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+                    class="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition border border-zinc-700">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
           </div>
-          <div id="approved-list" class="space-y-2 max-h-40 overflow-y-auto font-mono text-xs text-green-300">
-            <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
+          <div id="approved-list" class="flex-1 overflow-y-auto space-y-2 font-mono text-xs pr-1">
+            <p class="text-zinc-600 text-center py-8 italic">Nenhum hit ainda...</p>
           </div>
         </div>
 
-        <!-- LISTA DE REPROVADOS -->
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-          <div class="flex justify-between items-center mb-3">
-            <h2 class="text-base font-semibold">Cartões Reprovados</h2>
+        <!-- LISTA DE REPROVADOS (MANTIDA) -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col h-[250px]">
+          <div class="flex justify-between items-center mb-3 shrink-0">
+            <h2 class="text-base font-semibold text-red-400">Falhas (Reprovados)</h2>
             <button onclick="copiarReprovados()"
-                    class="text-xs bg-red-600 active:bg-red-700 hover:bg-red-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition">
+                    class="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition border border-zinc-700">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
           </div>
-          <div id="rejected-list" class="space-y-2 max-h-40 overflow-y-auto font-mono text-xs text-red-300">
-            <p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>
+          <div id="rejected-list" class="flex-1 overflow-y-auto space-y-2 font-mono text-xs pr-1">
+            <p class="text-zinc-600 text-center py-8 italic">Nenhuma falha registrada...</p>
           </div>
         </div>
 
-        <!-- HISTÓRICO -->
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col" style="height: 280px;">
-          <div class="flex justify-between items-center mb-3">
-            <h2 class="text-base font-semibold">Histórico de Eventos</h2>
-            <button onclick="limparLogs()"
-                    class="text-zinc-400 active:text-white hover:text-white transition-colors text-sm flex items-center gap-1">
+        <!-- LOGS DO SISTEMA -->
+        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col h-[200px]">
+          <div class="flex justify-between items-center mb-3 shrink-0">
+            <h2 class="text-base font-semibold text-zinc-400">System Logs</h2>
+            <button onclick="limparLogs()" class="text-zinc-500 hover:text-white transition-colors text-xs">
               <i class="fa-solid fa-trash"></i>
             </button>
           </div>
-          <div id="history" class="flex-1 overflow-y-auto space-y-2.5 text-sm"></div>
+          <div id="history" class="flex-1 overflow-y-auto space-y-1.5 text-xs font-mono pr-1"></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- MODAL -->
-  <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50 p-4">
-    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-sm text-center">
-      <i class="fa-solid fa-circle-check text-5xl text-emerald-500 mb-5"></i>
-      <h3 class="text-xl font-bold mb-2">Processamento Concluído</h3>
-      <p class="text-zinc-400 mb-6 text-sm">Todos os cartões foram processados.</p>
-      <button onclick="fecharModal()" class="w-full py-3.5 bg-blue-600 active:bg-blue-700 hover:bg-blue-500 rounded-xl font-semibold transition">
-        Fechar
+  <!-- MODAL DE CONCLUSÃO -->
+  <div id="modal-fim" class="hidden fixed inset-0 bg-black/90 backdrop-blur-sm items-center justify-center z-50 p-4 transition-opacity">
+    <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-8 w-full max-w-sm text-center shadow-2xl">
+      <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-5">
+        <i class="fa-solid fa-check text-3xl text-green-500"></i>
+      </div>
+      <h3 class="text-2xl font-bold mb-2 text-white">Processamento Concluído</h3>
+      <p class="text-zinc-400 mb-6 text-sm">Todos os cartões da lista foram testados.</p>
+      
+      <div class="grid grid-cols-2 gap-3 mb-6">
+         <div class="bg-zinc-800 p-3 rounded-lg border border-zinc-700">
+            <div class="text-xs text-zinc-500 uppercase">Aprovados</div>
+            <div id="modal-aprovados" class="text-xl font-bold text-green-400">0</div>
+         </div>
+         <div class="bg-zinc-800 p-3 rounded-lg border border-zinc-700">
+            <div class="text-xs text-zinc-500 uppercase">Reprovados</div>
+            <div id="modal-reprovados" class="text-xl font-bold text-red-400">0</div>
+         </div>
+      </div>
+
+      <button onclick="fecharModal()" class="w-full py-3 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 rounded-xl font-semibold transition text-white">
+        Fechar Painel
       </button>
     </div>
   </div>
 
   <script>
-    // ==================== ESTADO ====================
+    // ==================== ESTADO GLOBAL ====================
     let socket = null;
     let testeIniciado = false;
     let totalCartoes = 0;
-    let processados = 0;
-    let aprovados = 0;
-    let reprovados = 0;
+    
+    // Estatísticas sincronizadas com o backend
+    let stats = {
+        processados: 0,
+        aprovados: 0,
+        reprovados: 0
+    };
+
     let listaAprovados = [];
     let listaReprovados = [];
-   
-    // Controle de performance
     let reconnectAttempts = 0;
-    let progressUpdatePending = false;
-    let lastProgressUpdate = 0;
-    const MAX_HISTORY = 120;
-    const PROGRESS_THROTTLE = 80;
+    const MAX_HISTORY = 100;
 
-    // ==================== BOTÕES DE CANAIS ====================
+    // ==================== UI: BOTÕES DE CANAIS ====================
     function criarBotoesCanais() {
       const container = document.getElementById('canais-buttons');
       container.innerHTML = '';
@@ -191,15 +210,13 @@
      
       for (let i = 1; i <= 6; i++) {
         const btn = document.createElement('button');
-        btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
-          i === selected
-            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40'
-            : 'bg-zinc-800 active:bg-zinc-700 text-zinc-300'
+        const isSelected = i === selected;
+        btn.className = `rounded-lg py-2 text-center transition-all active:scale-95 text-sm font-medium ${
+          isSelected
+            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 border border-blue-500'
+            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700'
         }`;
-        btn.innerHTML = `
-          <div class="text-2xl font-bold leading-none">${i}</div>
-          <div class="text-[11px] mt-1 opacity-70">canais</div>
-        `;
+        btn.textContent = i;
         btn.onclick = () => {
           document.getElementById('canais').value = i;
           criarBotoesCanais();
@@ -213,31 +230,31 @@
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return;
       }
+      
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      
       try {
-        socket = new WebSocket(`wss://${window.location.host}/ws`);
+        socket = new WebSocket(wsUrl);
       } catch (err) {
-        console.error('Erro ao criar WebSocket:', err);
         agendarReconexao();
         return;
       }
 
       socket.onopen = () => {
         reconnectAttempts = 0;
-        document.getElementById('status-text').textContent = "Online";
-        document.getElementById('status-led').className = "w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse";
+        updateStatus("Online", "green");
       };
 
       socket.onmessage = (event) => {
         let data;
         try {
           data = JSON.parse(event.data);
-        } catch (e) {
-          return;
-        }
+        } catch (e) { return; }
 
         switch (data.type) {
           case "log":
-            handleLog(data.mensagem);
+            addLog(data.mensagem);
             break;
           case "aprovado":
             handleAprovado(data.cartao);
@@ -245,184 +262,142 @@
           case "reprovado":
             handleReprovado(data.cartao);
             break;
+          case "progresso":
+            // Atualização estruturada vinda do backend
+            stats.processados = data.processados;
+            stats.aprovados = data.aprovados;
+            // O backend não envia reprovados explicitamente no objeto progresso, 
+            // mas podemos calcular ou confiar no evento 'reprovado' para incrementar stats.reprovados
+            totalCartoes = data.total;
+            updateStatsUI();
+            updateProgressUI();
+            break;
           case "status":
-            if (data.rodando === false && testeIniciado && processados > 0) {
-              mostrarModalFinal();
+            if (data.rodando === false && testeIniciado) {
+              finalizarTeste();
             }
             break;
         }
       };
 
       socket.onclose = () => {
-        document.getElementById('status-text').textContent = "Reconectando...";
-        document.getElementById('status-led').className = "w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse";
+        updateStatus("Reconectando...", "yellow");
         agendarReconexao();
       };
-
-      socket.onerror = () => {};
+      
+      socket.onerror = () => { socket.close(); };
     }
 
     function agendarReconexao() {
       reconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 15000);
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 10000);
       setTimeout(conectarWebSocket, delay);
     }
 
-    // ==================== HANDLERS ====================
-    function handleLog(mensagem) {
-      adicionarHistorico(mensagem);
-
-      const isAprovado = mensagem.includes("APROVADO") || mensagem.includes("✅");
-      const isReprovado = mensagem.includes("Reprovado") || mensagem.includes("REPROVADO") || mensagem.includes("❌");
-
-      if (isAprovado || isReprovado) {
-        processados++;
-        scheduleProgressUpdate();
-      }
+    function updateStatus(text, color) {
+        const led = document.getElementById('status-led');
+        const txt = document.getElementById('status-text');
+        txt.textContent = text;
+        led.className = `w-2.5 h-2.5 rounded-full animate-pulse bg-${color}-500`;
+        txt.className = `text-xs font-medium text-${color}-400`;
     }
 
+    // ==================== HANDLERS DE DADOS ====================
     function handleAprovado(cartao) {
+      // Evita duplicatas visuais
       if (listaAprovados.includes(cartao)) return;
-     
+      
       listaAprovados.push(cartao);
-      aprovados++;
-      document.getElementById('approved-count').textContent = aprovados;
-      adicionarAprovadoDOM(cartao);
+      stats.aprovados++; // Garante sincronia
+      
+      const container = document.getElementById('approved-list');
+      // Remove placeholder se for o primeiro item
+      if (container.children.length > 0 && container.children[0].tagName === 'P') {
+          container.innerHTML = '';
+      }
+
+      const div = document.createElement('div');
+      div.className = "bg-green-900/20 border border-green-500/30 rounded p-2 text-green-300 animate-[fadeIn_0.3s_ease-out] break-all";
+      div.textContent = cartao;
+      container.prepend(div);
+      updateStatsUI();
     }
 
     function handleReprovado(cartao) {
       if (listaReprovados.includes(cartao)) return;
 
       listaReprovados.push(cartao);
-      reprovados++;
-      document.getElementById('rejected-count').textContent = reprovados;
-      adicionarReprovadoDOM(cartao);
-    }
+      stats.reprovados++;
 
-    // ==================== DOM ====================
-    function adicionarHistorico(mensagem) {
-      const history = document.getElementById('history');
-     
-      while (history.children.length >= MAX_HISTORY) {
-        history.removeChild(history.lastChild);
-      }
-
-      let cor = "text-zinc-400";
-      if (mensagem.includes("APROVADO") || mensagem.includes("✅")) cor = "text-green-400";
-      else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) cor = "text-red-400";
-      else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) cor = "text-blue-400";
-
-      const entry = document.createElement('div');
-      entry.className = `flex gap-2.5 ${cor}`;
-      entry.innerHTML = `
-        <i class="fa-solid fa-circle text-[5px] mt-1.5 opacity-60 shrink-0"></i>
-        <div class="min-w-0">
-          <span class="break-all text-[13px] leading-snug">${mensagem}</span>
-        </div>
-      `;
-     
-      history.insertBefore(entry, history.firstChild);
-    }
-
-    function adicionarAprovadoDOM(cartao) {
-      const container = document.getElementById('approved-list');
-      const placeholder = container.querySelector('p');
-      if (placeholder) placeholder.remove();
-
-      const div = document.createElement('div');
-      div.className = "bg-green-900/30 border border-green-700/50 rounded-lg p-2.5 break-all";
-      div.textContent = cartao;
-      container.appendChild(div);
-    }
-
-    function adicionarReprovadoDOM(cartao) {
       const container = document.getElementById('rejected-list');
-      const placeholder = container.querySelector('p');
-      if (placeholder) placeholder.remove();
+      if (container.children.length > 0 && container.children[0].tagName === 'P') {
+          container.innerHTML = '';
+      }
 
       const div = document.createElement('div');
-      div.className = "bg-red-900/30 border border-red-700/50 rounded-lg p-2.5 break-all";
+      div.className = "bg-red-900/20 border border-red-500/30 rounded p-2 text-red-300 animate-[fadeIn_0.3s_ease-out] break-all opacity-80 hover:opacity-100 transition-opacity";
       div.textContent = cartao;
-      container.appendChild(div);
+      container.prepend(div);
+      updateStatsUI();
     }
 
-    function scheduleProgressUpdate() {
-      if (progressUpdatePending) return;
-     
-      const now = performance.now();
-      const timeSinceLast = now - lastProgressUpdate;
+    function addLog(msg) {
+        const history = document.getElementById('history');
+        const div = document.createElement('div');
+        
+        let colorClass = "text-zinc-500";
+        if (msg.includes("APROVADO")) colorClass = "text-green-400";
+        else if (msg.includes("Reprovado") || msg.includes("Erro")) colorClass = "text-red-400";
+        else if (msg.includes("Sistema") || msg.includes("Auth")) colorClass = "text-blue-400";
 
-      if (timeSinceLast >= PROGRESS_THROTTLE) {
-        atualizarProgresso();
-        lastProgressUpdate = now;
-      } else {
-        progressUpdatePending = true;
-        setTimeout(() => {
-          atualizarProgresso();
-          lastProgressUpdate = performance.now();
-          progressUpdatePending = false;
-        }, PROGRESS_THROTTLE - timeSinceLast);
-      }
+        div.className = `${colorClass} break-words border-l-2 border-zinc-800 pl-2 py-0.5`;
+        div.textContent = msg;
+        
+        history.prepend(div);
+        if (history.children.length > MAX_HISTORY) history.lastChild.remove();
     }
 
-    function atualizarProgresso() {
-      if (totalCartoes <= 0) return;
-     
-      const percent = Math.min(Math.round((processados / totalCartoes) * 100), 100);
-    
-      document.getElementById('progress').style.width = percent + '%';
-      document.getElementById('current').textContent = processados;
-      document.getElementById('total').textContent = totalCartoes;
-      document.getElementById('status-text-progress').textContent =
-        percent >= 100 ? "Finalizado!" : "Processando...";
+    function updateStatsUI() {
+        document.getElementById('approved-count').textContent = stats.aprovados;
+        document.getElementById('rejected-count').textContent = stats.reprovados;
+        document.getElementById('current').textContent = stats.processados;
     }
 
-    // ==================== AÇÕES ====================
-    function copiarAprovados() {
-      if (listaAprovados.length === 0) {
-        alert("Nenhum cartão aprovado para copiar.");
-        return;
-      }
-      navigator.clipboard.writeText(listaAprovados.join('\n')).then(() => {
-        alert("Aprovados copiados com sucesso!");
-      });
+    function updateProgressUI() {
+        if (totalCartoes === 0) return;
+        const pct = Math.min(Math.round((stats.processados / totalCartoes) * 100), 100);
+        document.getElementById('progress').style.width = `${pct}%`;
+        document.getElementById('total').textContent = totalCartoes;
+        
+        const statusTxt = document.getElementById('status-text-progress');
+        if (pct >= 100) statusTxt.textContent = "Concluído";
+        else if (testeIniciado) statusTxt.textContent = "Processando...";
     }
 
-    function copiarReprovados() {
-      if (listaReprovados.length === 0) {
-        alert("Nenhum cartão reprovado para copiar.");
-        return;
-      }
-      navigator.clipboard.writeText(listaReprovados.join('\n')).then(() => {
-        alert("Reprovados copiados com sucesso!");
-      });
-    }
-
-    function limparLogs() {
-      document.getElementById('history').innerHTML = '';
-    }
-
+    // ==================== AÇÕES DO USUÁRIO ====================
     function iniciarTeste() {
       const lista = document.getElementById('lista-cartoes').value.trim();
-      if (!lista) return alert("Insira a lista de cartões!");
-     
-      totalCartoes = lista.split('\n').filter(l => l.trim()).length;
-      processados = 0;
-      aprovados = 0;
-      reprovados = 0;
+      if (!lista) return alert("A lista de cartões está vazia.");
+      
+      // Resetar Estado Local
+      stats = { processados: 0, aprovados: 0, reprovados: 0 };
       listaAprovados = [];
       listaReprovados = [];
-     
-      document.getElementById('approved-count').textContent = '0';
-      document.getElementById('rejected-count').textContent = '0';
-      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
-      document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>';
-      document.getElementById('progress').style.width = '0%';
-      document.getElementById('current').textContent = '0';
-      document.getElementById('total').textContent = totalCartoes;
-      document.getElementById('status-text-progress').textContent = "Iniciando...";
+      testeIniciado = true;
+      
+      // Limpar UI
+      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-600 text-center py-8 italic">Aguardando resultados...</p>';
+      document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-600 text-center py-8 italic">Nenhuma falha registrada...</p>';
       document.getElementById('history').innerHTML = '';
-     
+      updateStatsUI();
+      updateProgressUI();
+      
+      // Alternar Botões
+      document.getElementById('btn-iniciar').classList.add('hidden');
+      document.getElementById('btn-parar').classList.remove('hidden');
+      document.getElementById('status-text-progress').textContent = "Iniciando backend...";
+
+      // Chamada API
       fetch('/api/iniciar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -430,43 +405,71 @@
           lista: lista,
           canais: parseInt(document.getElementById('canais').value)
         })
+      })
+      .then(res => res.json())
+      .then(data => {
+          if (data.status === 'já_em_execucao') {
+              alert("Um teste já está em andamento.");
+              pararTeste(); // Reseta UI visualmente
+          }
+      })
+      .catch(err => {
+          console.error(err);
+          alert("Erro de conexão com a API.");
+          pararTeste();
       });
-     
-      testeIniciado = true;
-      document.getElementById('btn-iniciar').classList.add('hidden');
-      document.getElementById('btn-parar').classList.remove('hidden');
     }
 
     function pararTeste() {
-      fetch('/api/parar', { method: 'POST' });
+      fetch('/api/parar', { method: 'POST' })
+      .then(() => {
+          document.getElementById('btn-iniciar').classList.remove('hidden');
+          document.getElementById('btn-parar').classList.add('hidden');
+          testeIniciado = false;
+          updateStatus("Parado", "red");
+      });
     }
 
-    function mostrarModalFinal() {
-      document.getElementById('modal-fim').classList.remove('hidden');
-      document.getElementById('modal-fim').classList.add('flex');
+    function finalizarTeste() {
+        testeIniciado = false;
+        document.getElementById('btn-iniciar').classList.remove('hidden');
+        document.getElementById('btn-parar').classList.add('hidden');
+        
+        // Preencher Modal
+        document.getElementById('modal-aprovados').textContent = stats.aprovados;
+        document.getElementById('modal-reprovados').textContent = stats.reprovados;
+        
+        const modal = document.getElementById('modal-fim');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+    }
+
+    function copiarAprovados() {
+      if (listaAprovados.length === 0) return;
+      navigator.clipboard.writeText(listaAprovados.join('\n'));
+      alert(`${listaAprovados.length} cartões aprovados copiados.`);
+    }
+
+    function copiarReprovados() {
+      if (listaReprovados.length === 0) return;
+      navigator.clipboard.writeText(listaReprovados.join('\n'));
+      alert(`${listaReprovados.length} cartões reprovados copiados.`);
+    }
+
+    function limparLogs() {
+      document.getElementById('history').innerHTML = '';
     }
 
     function fecharModal() {
       document.getElementById('modal-fim').classList.add('hidden');
       document.getElementById('modal-fim').classList.remove('flex');
-    
-      testeIniciado = false;
-      document.getElementById('btn-iniciar').classList.remove('hidden');
-      document.getElementById('btn-parar').classList.add('hidden');
     }
 
-    // ==================== INIT ====================
+    // ==================== INICIALIZAÇÃO ====================
     window.onload = () => {
       criarBotoesCanais();
       conectarWebSocket();
     };
-
-    window.addEventListener('beforeunload', () => {
-      if (socket) {
-        socket.onclose = null;
-        socket.close();
-      }
-    });
   </script>
 </body>
 </html>
