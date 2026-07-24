@@ -32,6 +32,7 @@
       </div>
     </div>
   </header>
+
   <div class="max-w-7xl mx-auto px-4 py-5 space-y-5">
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
       <!-- ESQUERDA -->
@@ -56,6 +57,7 @@
             </div>
           </div>
         </div>
+
         <!-- BOTÕES -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button onclick="iniciarTeste()" id="btn-iniciar"
@@ -69,6 +71,7 @@
             INTERROMPER
           </button>
         </div>
+
         <!-- LISTA DE CARTÕES -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-lg font-semibold mb-3">Lista de Cartões</h2>
@@ -77,6 +80,7 @@
             placeholder="Cole aqui no formato:&#10;4111111111111111|12|2028|123"></textarea>
         </div>
       </div>
+
       <!-- DIREITA -->
       <div class="w-full lg:w-96 space-y-5">
         <!-- APROVADOS + REPROVADOS -->
@@ -92,6 +96,7 @@
             <p class="text-red-100/70 text-xs">cartões</p>
           </div>
         </div>
+
         <!-- INSTÂNCIAS PARALELAS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
@@ -102,6 +107,7 @@
           <input type="hidden" id="canais" value="4">
           <p class="text-xs text-zinc-500 mt-3 text-center">Quantidade de canais simultâneos</p>
         </div>
+
         <!-- LISTA DE APROVADOS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div class="flex justify-between items-center mb-3">
@@ -116,6 +122,7 @@
             <p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>
           </div>
         </div>
+
         <!-- LISTA DE REPROVADOS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div class="flex justify-between items-center mb-3">
@@ -130,6 +137,7 @@
             <p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>
           </div>
         </div>
+
         <!-- HISTÓRICO -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800 flex flex-col" style="height: 280px;">
           <div class="flex justify-between items-center mb-3">
@@ -144,6 +152,7 @@
       </div>
     </div>
   </div>
+
   <!-- MODAL -->
   <div id="modal-fim" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md items-center justify-center z-50 p-4">
     <div class="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-sm text-center">
@@ -155,6 +164,7 @@
       </button>
     </div>
   </div>
+
   <script>
     // ==================== ESTADO ====================
     let socket = null;
@@ -198,7 +208,7 @@
       }
     }
 
-    // ==================== WEBSOCKET OTIMIZADO ====================
+    // ==================== WEBSOCKET ====================
     function conectarWebSocket() {
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return;
@@ -210,11 +220,13 @@
         agendarReconexao();
         return;
       }
+
       socket.onopen = () => {
         reconnectAttempts = 0;
         document.getElementById('status-text').textContent = "Online";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse";
       };
+
       socket.onmessage = (event) => {
         let data;
         try {
@@ -222,12 +234,16 @@
         } catch (e) {
           return;
         }
+
         switch (data.type) {
           case "log":
             handleLog(data.mensagem);
             break;
           case "aprovado":
             handleAprovado(data.cartao);
+            break;
+          case "reprovado":
+            handleReprovado(data.cartao);
             break;
           case "status":
             if (data.rodando === false && testeIniciado && processados > 0) {
@@ -236,11 +252,13 @@
             break;
         }
       };
+
       socket.onclose = () => {
         document.getElementById('status-text').textContent = "Reconectando...";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse";
         agendarReconexao();
       };
+
       socket.onerror = () => {};
     }
 
@@ -250,7 +268,7 @@
       setTimeout(conectarWebSocket, delay);
     }
 
-    // ==================== HANDLERS OTIMIZADOS ====================
+    // ==================== HANDLERS ====================
     function handleLog(mensagem) {
       adicionarHistorico(mensagem);
 
@@ -259,19 +277,6 @@
 
       if (isAprovado || isReprovado) {
         processados++;
-       
-        if (isReprovado) {
-          reprovados++;
-          document.getElementById('rejected-count').textContent = reprovados;
-
-          // Extrai o cartão do log (formato: 4111...|12|2028|123)
-          const match = mensagem.match(/(\d{13,19}\|\d{1,2}\|\d{2,4}\|\d{3,4})/);
-          if (match && !listaReprovados.includes(match[1])) {
-            listaReprovados.push(match[1]);
-            adicionarReprovadoDOM(match[1]);
-          }
-        }
-       
         scheduleProgressUpdate();
       }
     }
@@ -285,7 +290,16 @@
       adicionarAprovadoDOM(cartao);
     }
 
-    // ==================== DOM OTIMIZADO ====================
+    function handleReprovado(cartao) {
+      if (listaReprovados.includes(cartao)) return;
+
+      listaReprovados.push(cartao);
+      reprovados++;
+      document.getElementById('rejected-count').textContent = reprovados;
+      adicionarReprovadoDOM(cartao);
+    }
+
+    // ==================== DOM ====================
     function adicionarHistorico(mensagem) {
       const history = document.getElementById('history');
      
