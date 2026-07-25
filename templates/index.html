@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Unimar Card Tester • v6.3</title>
+  <title>Unimar Card Tester • v6.4</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+  <base target="_blank">
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; }
     .progress-bar { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -15,7 +16,7 @@
     ::-webkit-scrollbar-track { background: #18181b; }
     ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #52525b; }
-    /* Glow effects do Kimi */
+    /* Glow effects */
     .glow-green { box-shadow: 0 0 20px rgba(16, 185, 129, 0.35); }
     .glow-red { box-shadow: 0 0 20px rgba(244, 63, 94, 0.35); }
     .glow-blue { box-shadow: 0 0 20px rgba(59, 130, 246, 0.25); }
@@ -24,6 +25,7 @@
     @keyframes slideIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes pulse-green { 0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); } }
     @keyframes pulse-red { 0%, 100% { box-shadow: 0 0 0 0 rgba(244, 63, 94, 0.4); } 50% { box-shadow: 0 0 0 6px rgba(244, 63, 94, 0); } }
+    @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     .animate-fade-in { animation: fadeIn 0.3s ease-out; }
     .animate-slide-in { animation: slideIn 0.2s ease-out; }
     .pulse-green { animation: pulse-green 2s infinite; }
@@ -38,10 +40,11 @@
     .toast-success { border-left: 3px solid #10b981; }
     .toast-error { border-left: 3px solid #ef4444; }
     .toast-info { border-left: 3px solid #3b82f6; }
+    .toast-warning { border-left: 3px solid #f59e0b; }
     .toast-exit { animation: fadeIn 0.3s ease-out reverse forwards; }
+    /* Loading skeleton */
+    .skeleton { background: linear-gradient(90deg, #27272a 25%, #3f3f46 50%, #27272a 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
   </style>
-<base target="_blank">
-<base target="_blank">
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
   <!-- TOAST CONTAINER -->
@@ -54,12 +57,12 @@
         <i class="fa-solid fa-credit-card text-2xl text-blue-500 shrink-0"></i>
         <div class="min-w-0">
           <h1 class="text-lg font-bold tracking-tight truncate">Unimar Card Tester</h1>
-          <p class="text-xs text-zinc-500">Multi-Context Manager v6.3</p>
+          <p class="text-xs text-zinc-500">Multi-Context Manager v6.4</p>
         </div>
       </div>
 
       <div class="flex items-center gap-2 shrink-0">
-        <!-- Badge de canais ativos (do Kimi) -->
+        <!-- Badge de canais ativos -->
         <div id="canais-badge" class="hidden items-center gap-1.5 bg-indigo-600/20 border border-indigo-500/30 px-3 py-1.5 rounded-full">
           <i class="fa-solid fa-bolt text-indigo-400 text-[10px]"></i>
           <span id="canais-text" class="text-xs font-semibold text-indigo-300">0 ativos</span>
@@ -70,9 +73,9 @@
           <span id="velocidade" class="text-xs font-mono text-zinc-300">0/min</span>
         </div>
         <!-- Status -->
-        <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full">
-          <div id="status-led" class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
-          <span id="status-text" class="text-xs font-medium text-green-400">Online</span>
+        <div id="status-container" class="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full cursor-help" title="Status da conexão">
+          <div id="status-led" class="w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse"></div>
+          <span id="status-text" class="text-xs font-medium text-yellow-400">Conectando...</span>
         </div>
       </div>
     </div>
@@ -82,7 +85,7 @@
     <div class="flex flex-col lg:flex-row gap-5 lg:gap-8">
       <!-- ESQUERDA -->
       <div class="flex-1 space-y-5">
-        <!-- PROGRESSO + STATS (Git base + Kimi stats) -->
+        <!-- PROGRESSO + STATS -->
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <i class="fa-solid fa-chart-bar text-blue-500"></i>
@@ -105,7 +108,7 @@
               </div>
             </div>
           </div>
-          <!-- Stats em tempo real (do Kimi) -->
+          <!-- Stats em tempo real -->
           <div class="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-zinc-800">
             <div class="text-center">
               <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Tempo</p>
@@ -125,12 +128,14 @@
         <!-- BOTÕES -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button onclick="iniciarTeste()" id="btn-iniciar"
-                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98]">
+                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Iniciar teste de cartões">
             <i class="fa-solid fa-play"></i>
             INICIAR
           </button>
           <button onclick="pararTeste()" id="btn-parar"
-                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden">
+                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden"
+                  title="Interromper teste atual">
             <i class="fa-solid fa-stop"></i>
             INTERROMPER
           </button>
@@ -142,7 +147,7 @@
             <h2 class="text-lg font-semibold">Lista de Cartões</h2>
             <div class="flex items-center gap-2">
               <span id="contador-cartoes" class="text-xs text-zinc-500 font-mono">0 cartões</span>
-              <button onclick="limparLista()" class="text-zinc-500 hover:text-red-400 transition text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-800">
+              <button onclick="limparLista()" class="text-zinc-500 hover:text-red-400 transition text-xs flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-800" title="Limpar lista">
                 <i class="fa-solid fa-trash-can"></i>
                 Limpar
               </button>
@@ -160,7 +165,7 @@
 
       <!-- DIREITA -->
       <div class="w-full lg:w-96 space-y-5">
-        <!-- APROVADOS + REPROVADOS (cores emerald/rose + glow do Kimi) -->
+        <!-- APROVADOS + REPROVADOS -->
         <div class="grid grid-cols-2 gap-3">
           <div class="bg-gradient-to-br from-emerald-500 to-green-600 rounded-2xl p-4 text-center relative overflow-hidden glow-green transition-all hover:scale-[1.02]">
             <div class="absolute top-2 right-2 opacity-20">
@@ -196,7 +201,8 @@
           <div class="flex justify-between items-center mb-3">
             <h2 class="text-base font-semibold">Cartões Aprovados</h2>
             <button onclick="copiarAprovados()"
-                    class="text-xs bg-emerald-600 active:bg-emerald-700 hover:bg-emerald-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-emerald-500/20">
+                    class="text-xs bg-emerald-600 active:bg-emerald-700 hover:bg-emerald-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-emerald-500/20"
+                    title="Copiar todos aprovados">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
@@ -211,7 +217,8 @@
           <div class="flex justify-between items-center mb-3">
             <h2 class="text-base font-semibold">Cartões Reprovados</h2>
             <button onclick="copiarReprovados()"
-                    class="text-xs bg-rose-600 active:bg-rose-700 hover:bg-rose-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-rose-500/20">
+                    class="text-xs bg-rose-600 active:bg-rose-700 hover:bg-rose-500 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition active:scale-95 shadow-lg shadow-rose-500/20"
+                    title="Copiar todos reprovados">
               <i class="fa-regular fa-copy"></i>
               <span>Copiar</span>
             </button>
@@ -228,7 +235,8 @@
             <div class="flex items-center gap-2">
               <span id="log-count" class="text-xs text-zinc-600 font-mono">0 logs</span>
               <button onclick="limparLogs()"
-                      class="text-zinc-400 active:text-white hover:text-white transition-colors text-sm flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-800">
+                      class="text-zinc-400 active:text-white hover:text-white transition-colors text-sm flex items-center gap-1 px-2 py-1 rounded hover:bg-zinc-800"
+                      title="Limpar histórico">
                 <i class="fa-solid fa-trash"></i>
               </button>
             </div>
@@ -292,13 +300,24 @@
     function showToast(message, type = 'info', duration = 3000) {
       const container = document.getElementById('toast-container');
       const toast = document.createElement('div');
-      const icons = { success: 'fa-check-circle text-emerald-400', error: 'fa-circle-xmark text-red-400', info: 'fa-circle-info text-blue-400' };
+      const icons = { 
+        success: 'fa-check-circle text-emerald-400', 
+        error: 'fa-circle-xmark text-red-400', 
+        info: 'fa-circle-info text-blue-400',
+        warning: 'fa-triangle-exclamation text-yellow-400'
+      };
       toast.className = `toast toast-${type}`;
       toast.innerHTML = `
         <i class="fa-solid ${icons[type]}"></i>
         <span class="text-sm text-zinc-200">${message}</span>
       `;
       container.appendChild(toast);
+      
+      // Remover toasts antigos se muitos acumularem
+      if (container.children.length > 5) {
+        container.removeChild(container.firstChild);
+      }
+      
       setTimeout(() => {
         toast.classList.add('toast-exit');
         setTimeout(() => toast.remove(), 300);
@@ -323,7 +342,10 @@
     }
 
     function pararTimer() {
-      if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+      if (timerInterval) { 
+        clearInterval(timerInterval); 
+        timerInterval = null; 
+      }
     }
 
     // ==================== CONTADOR DE CARTÕES ====================
@@ -333,10 +355,13 @@
       document.getElementById('contador-cartoes').textContent = count + ' cartão' + (count !== 1 ? 's' : '');
     }
 
-    document.getElementById('lista-cartoes').addEventListener('input', atualizarContadorCartoes);
-
     function limparLista() {
+      if (testeIniciado) {
+        showToast('Não é possível limpar durante um teste!', 'warning');
+        return;
+      }
       document.getElementById('lista-cartoes').value = '';
+      localStorage.removeItem('cartao-lista');
       atualizarContadorCartoes();
       showToast('Lista limpa', 'info');
     }
@@ -359,9 +384,14 @@
           <div class="text-[11px] mt-1 opacity-70">canais</div>
         `;
         btn.onclick = () => {
+          if (testeIniciado) {
+            showToast('Não é possível alterar canais durante o teste!', 'warning');
+            return;
+          }
           document.getElementById('canais').value = i;
           criarBotoesCanais();
         };
+        btn.title = `${i} canal(is) simultâneo(s)`;
         container.appendChild(btn);
       }
     }
@@ -371,6 +401,7 @@
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         return;
       }
+      
       try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
@@ -384,6 +415,21 @@
         reconnectAttempts = 0;
         document.getElementById('status-text').textContent = "Online";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse";
+        document.getElementById('status-container').title = "Conectado ao servidor";
+        
+        // Reconectar estado se estava em execução
+        if (testeIniciado) {
+          fetch('/api/status')
+            .then(r => r.json())
+            .then(data => {
+              if (data.rodando) {
+                handleStatus(data);
+              }
+            })
+            .catch(() => {});
+        }
+        
+        showToast('Conectado ao servidor!', 'success', 2000);
       };
 
       socket.onmessage = (event) => {
@@ -419,24 +465,31 @@
         }
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         document.getElementById('status-text').textContent = "Reconectando...";
         document.getElementById('status-led').className = "w-2.5 h-2.5 bg-yellow-500 rounded-full animate-pulse";
-        agendarReconexao();
+        document.getElementById('status-container').title = "Reconectando ao servidor...";
+        
+        if (event.code !== 1000) { // Não reconectar se foi fechamento limpo
+          agendarReconexao();
+        }
       };
 
-      socket.onerror = () => {};
+      socket.onerror = (error) => {
+        console.error('Erro no WebSocket:', error);
+      };
     }
 
     function agendarReconexao() {
       reconnectAttempts++;
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempts - 1), 15000);
+      console.log(`Tentando reconectar em ${delay/1000}s... (tentativa ${reconnectAttempts})`);
       setTimeout(conectarWebSocket, delay);
     }
 
     // ==================== HANDLERS ====================
     function handleStatus(data) {
-      // Badge de canais ativos (do Kimi)
+      // Badge de canais ativos
       if (data.canais_ativos !== undefined) {
         const badge = document.getElementById('canais-badge');
         const txt = document.getElementById('canais-text');
@@ -450,7 +503,7 @@
         }
       }
 
-      // Modal só se realmente terminou (do Kimi)
+      // Modal só se realmente terminou
       if (data.rodando === false && testeIniciado && processados > 0 && processados >= totalCartoes) {
         mostrarModalFinal();
         pararTimer();
@@ -525,31 +578,32 @@
     function adicionarHistorico(mensagem) {
       const history = document.getElementById('history');
 
+      // Limitar quantidade de logs
       while (history.children.length >= MAX_HISTORY) {
         history.removeChild(history.lastChild);
       }
 
       let cor = "text-zinc-400";
       let icon = "fa-circle";
+      
       if (mensagem.includes("APROVADO") || mensagem.includes("✅")) {
         cor = "text-emerald-400";
         icon = "fa-check";
-      }
-      else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) {
+      } else if (mensagem.includes("Reprovado") || mensagem.includes("❌")) {
         cor = "text-rose-400";
         icon = "fa-xmark";
-      }
-      else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) {
+      } else if (mensagem.includes("Faxina") || mensagem.includes("Sistema")) {
         cor = "text-blue-400";
         icon = "fa-broom";
-      }
-      else if (mensagem.includes("Autenticação")) {
+      } else if (mensagem.includes("Autenticação")) {
         cor = "text-yellow-400";
         icon = "fa-lock";
-      }
-      else if (mensagem.includes("Canal")) {
+      } else if (mensagem.includes("Canal")) {
         cor = "text-purple-400";
         icon = "fa-server";
+      } else if (mensagem.includes("ERRO") || mensagem.includes("Erro")) {
+        cor = "text-red-400";
+        icon = "fa-circle-exclamation";
       }
 
       const entry = document.createElement('div');
@@ -575,8 +629,11 @@
       div.textContent = cartao;
       div.title = "Clique para copiar";
       div.onclick = () => {
-        navigator.clipboard.writeText(cartao);
-        showToast('Cartão copiado!', 'success', 1500);
+        navigator.clipboard.writeText(cartao).then(() => {
+          showToast('Cartão copiado!', 'success', 1500);
+        }).catch(() => {
+          showToast('Erro ao copiar', 'error', 1500);
+        });
       };
       container.appendChild(div);
       container.scrollTop = container.scrollHeight;
@@ -592,8 +649,11 @@
       div.textContent = cartao;
       div.title = "Clique para copiar";
       div.onclick = () => {
-        navigator.clipboard.writeText(cartao);
-        showToast('Cartão copiado!', 'info', 1500);
+        navigator.clipboard.writeText(cartao).then(() => {
+          showToast('Cartão copiado!', 'info', 1500);
+        }).catch(() => {
+          showToast('Erro ao copiar', 'error', 1500);
+        });
       };
       container.appendChild(div);
       container.scrollTop = container.scrollHeight;
@@ -646,21 +706,25 @@
     // ==================== AÇÕES ====================
     function copiarAprovados() {
       if (listaAprovados.length === 0) {
-        showToast("Nenhum cartão aprovado para copiar.", 'error');
+        showToast("Nenhum cartão aprovado para copiar.", 'warning');
         return;
       }
       navigator.clipboard.writeText(listaAprovados.join('\n')).then(() => {
         showToast(`${listaAprovados.length} aprovados copiados!`, 'success');
+      }).catch(() => {
+        showToast('Erro ao copiar', 'error');
       });
     }
 
     function copiarReprovados() {
       if (listaReprovados.length === 0) {
-        showToast("Nenhum cartão reprovado para copiar.", 'error');
+        showToast("Nenhum cartão reprovado para copiar.", 'warning');
         return;
       }
       navigator.clipboard.writeText(listaReprovados.join('\n')).then(() => {
         showToast(`${listaReprovados.length} reprovados copiados!`, 'success');
+      }).catch(() => {
+        showToast('Erro ao copiar', 'error');
       });
     }
 
@@ -690,6 +754,7 @@
       listaReprovados = [];
       startTime = Date.now();
 
+      // Reset UI
       document.getElementById('approved-count').textContent = '0';
       document.getElementById('rejected-count').textContent = '0';
       document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
@@ -705,6 +770,9 @@
       document.getElementById('stat-taxa').textContent = '0%';
       document.getElementById('stat-velocidade').innerHTML = '0 <span class="text-xs text-zinc-500">/min</span>';
 
+      // Desabilitar textarea durante teste
+      document.getElementById('lista-cartoes').disabled = true;
+
       fetch('/api/iniciar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -715,21 +783,27 @@
       }).then(r => r.json()).then(data => {
         if (data.status === 'já_em_execucao') {
           showToast('Já existe um teste em execução!', 'error');
+          return;
+        }
+        if (data.status === 'iniciado') {
+          testeIniciado = true;
+          document.getElementById('btn-iniciar').classList.add('hidden');
+          document.getElementById('btn-parar').classList.remove('hidden');
+          iniciarTimer();
+          showToast(`Iniciando teste com ${totalCartoes} cartões...`, 'info');
         }
       }).catch(err => {
         showToast('Erro ao iniciar: ' + err.message, 'error');
+        document.getElementById('lista-cartoes').disabled = false;
       });
-
-      testeIniciado = true;
-      document.getElementById('btn-iniciar').classList.add('hidden');
-      document.getElementById('btn-parar').classList.remove('hidden');
-      iniciarTimer();
-      showToast(`Iniciando teste com ${totalCartoes} cartões...`, 'info');
     }
 
     function pararTeste() {
       fetch('/api/parar', { method: 'POST' })
-        .then(() => showToast('Interrompendo teste...', 'info'))
+        .then(() => {
+          showToast('Interrompendo teste...', 'warning');
+          document.getElementById('lista-cartoes').disabled = false;
+        })
         .catch(err => showToast('Erro ao parar: ' + err.message, 'error'));
     }
 
@@ -753,7 +827,9 @@
       document.getElementById('btn-parar').classList.add('hidden');
       document.getElementById('canais-badge').classList.add('hidden');
       document.getElementById('canais-badge').classList.remove('flex');
+      document.getElementById('lista-cartoes').disabled = false;
       startTime = null;
+      pararTimer();
     }
 
     // ==================== INIT ====================
@@ -761,12 +837,55 @@
       criarBotoesCanais();
       conectarWebSocket();
       atualizarContadorCartoes();
+      
+      // Recuperar lista salva
+      const savedList = localStorage.getItem('cartao-lista');
+      if (savedList && !testeIniciado) {
+        document.getElementById('lista-cartoes').value = savedList;
+        atualizarContadorCartoes();
+      }
+      
+      // Monitor de conexão
+      window.addEventListener('online', () => {
+        showToast('Conexão restaurada! Reconectando...', 'success', 2000);
+        conectarWebSocket();
+      });
+      
+      window.addEventListener('offline', () => {
+        showToast('Sem conexão com a internet!', 'error', 5000);
+        document.getElementById('status-text').textContent = "Offline";
+        document.getElementById('status-led').className = "w-2.5 h-2.5 bg-red-500 rounded-full";
+        document.getElementById('status-container').title = "Sem conexão com a internet";
+      });
     };
 
-    window.addEventListener('beforeunload', () => {
+    // Salvar lista automaticamente
+    document.getElementById('lista-cartoes').addEventListener('input', () => {
+      localStorage.setItem('cartao-lista', document.getElementById('lista-cartoes').value);
+      atualizarContadorCartoes();
+    });
+
+    // Confirmação ao sair durante teste
+    window.addEventListener('beforeunload', (e) => {
+      if (testeIniciado) {
+        e.preventDefault();
+        e.returnValue = 'Um teste está em execução. Deseja realmente sair?';
+        return e.returnValue;
+      }
+      
       if (socket) {
         socket.onclose = null;
         socket.close();
+      }
+    });
+
+    // Fechar modal com ESC
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const modal = document.getElementById('modal-fim');
+        if (!modal.classList.contains('hidden')) {
+          fecharModal();
+        }
       }
     });
   </script>
