@@ -273,7 +273,7 @@ async def login_mestre(playwright):
         return False
 
 async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
-    """Worker otimizado com retentativa automática em caso de timeout."""
+    """Worker otimizado com retentativa automática em caso de timeout e recuperação de crash."""
     estado["canais_ativos"] += 1
     await broadcast("status", {"canais_ativos": estado["canais_ativos"]})
 
@@ -388,8 +388,39 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                         await broadcast("reprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
 
             except Exception as e:
+                erro_msg = str(e).lower()
                 log(f"[Canal {id_worker}] Erro item {indice}: {e}")
-                await broadcast("reprovado", {"cartao": linha})
+                
+                # Verifica se o erro foi causado por um crash ou fechamento da página
+                if "crashed" in erro_msg or "closed" in erro_msg or "target" in erro_msg:
+                    log(f"[Canal {id_worker}] 🔄 Página crashou. Recriando contexto e página...")
+                    
+                    # Tenta fechar o que sobrou do contexto antigo
+                    try:
+                        await page.close()
+                        await context.close()
+                    except:
+                        pass
+                    
+                    # Recria o contexto para este worker
+                    context = await browser.new_context(
+                        storage_state=SESSAO_PATH,
+                        viewport={"width": 1280, "height": 720},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+                    )
+                    page = await context.new_page()
+                    page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
+                    
+                    # Re-enfileira o cartão interrompido pelo crash (se houver tentativas sobrando)
+                    if tentativa < MAX_TENTATIVAS:
+                        log(f"[Canal {id_worker}][Item {indice}] ⚠️ Crash — Re-enfileirando (retentativa {tentativa + 1}/{MAX_TENTATIVAS})")
+                        await fila.put((indice, linha, tentativa + 1))
+                        deve_contar_como_concluido = False
+                    else:
+                        await broadcast("reprovado", {"cartao": linha})
+                else:
+                    # Se for outro tipo de erro comum, apenas reprova
+                    await broadcast("reprovado", {"cartao": linha})
 
             finally:
                 fila.task_done()
