@@ -32,7 +32,7 @@ RUN pip install playwright && \
     playwright install chromium
 
 # Configurar diretório de trabalho
-WORKDIR /card
+WORKDIR /app
 
 # Copiar e instalar dependências Python
 COPY requirements.txt .
