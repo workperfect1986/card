@@ -1,36 +1,62 @@
 import os
-import sys
 import time
-from fastapi import FastAPI
+import asyncio
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 import uvicorn
 
 app = FastAPI()
 
-@app.get("/")
-async def root():
-    return {
-        "message": "Unimar Card Tester ONLINE",
-        "time": time.strftime("%H:%M:%S"),
-        "port": os.getenv("PORT", "não definida")
-    }
+# Estado simples
+class Estado:
+    def __init__(self):
+        self.rodando = False
+        self.clients = set()
+
+estado = Estado()
+
+# WebSocket
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    estado.clients.add(websocket)
+    try:
+        await websocket.send_json({"type": "status", "rodando": estado.rodando})
+        while True:
+            data = await websocket.receive_json()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        estado.clients.discard(websocket)
+
+# Rota principal com HTML inline
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Teste WebSocket</title></head>
+    <body style="background:#111;color:#fff;font-family:sans-serif;padding:20px">
+        <h1>🚀 WebSocket Test</h1>
+        <button onclick="testar()">Enviar Ping</button>
+        <div id="log"></div>
+        <script>
+            const ws = new WebSocket(`ws://${location.host}/ws`);
+            ws.onmessage = (e) => {
+                document.getElementById('log').innerHTML += '<p>' + JSON.stringify(JSON.parse(e.data)) + '</p>';
+            };
+            function testar() {
+                ws.send(JSON.stringify({type: "ping"}));
+            }
+        </script>
+    </body>
+    </html>"""
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
 
 if __name__ == "__main__":
-    PORT = int(os.getenv("PORT", "8000"))
-    
-    print("=" * 50, flush=True)
-    print(f"Iniciando servidor em 0.0.0.0:{PORT}", flush=True)
-    print(f"Health check: http://0.0.0.0:{PORT}/api/health", flush=True)
-    print("=" * 50, flush=True)
-    
-    # Iniciar o servidor com configurações explícitas para Railway
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=PORT,
-        log_level="info",
-        access_log=True
-    )
+    port = int(os.getenv("PORT", "8000"))
+    print(f"Iniciando em 0.0.0.0:{port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
