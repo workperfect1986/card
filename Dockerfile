@@ -26,27 +26,30 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Instalar Playwright com dependências
+# Instalar Playwright
 RUN pip install playwright && \
-    playwright install chromium && \
-    playwright install-deps chromium
+    playwright install-deps chromium && \
+    playwright install chromium
 
 # Configurar diretório de trabalho
 WORKDIR /app
 
-# Copiar requirements primeiro (cache do Docker)
+# Copiar e instalar dependências Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar resto do código
+# Copiar código
 COPY . .
 
-# Criar diretórios necessários
-RUN mkdir -p templates && \
-    touch aprovados.txt
+# Criar diretórios
+RUN mkdir -p templates
 
-# Expor porta
+# Porta
 EXPOSE 5000
 
-# Comando para iniciar
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')" || exit 1
+
+# Iniciar
 CMD ["python", "main.py"]
