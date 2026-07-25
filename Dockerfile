@@ -41,15 +41,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código
 COPY . .
 
-# Criar diretórios
+# Criar diretórios necessários
 RUN mkdir -p templates
 
-# Porta
-EXPOSE 5000
+# EXPOSE não é necessário no Railway, mas ajuda na documentação
+EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health')" || exit 1
-
-# Iniciar
+# Comando para iniciar
 CMD ["python", "main.py"]
