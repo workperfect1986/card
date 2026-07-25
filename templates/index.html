@@ -473,12 +473,6 @@
 
     function handleLog(mensagem) {
       adicionarHistorico(mensagem);
-      const isAprovado = mensagem.includes("APROVADO") || mensagem.includes("✅");
-      const isReprovado = mensagem.includes("Reprovado") || mensagem.includes("REPROVADO") || mensagem.includes("❌");
-      if (isAprovado || isReprovado) {
-        processados++;
-        scheduleProgressUpdate();
-      }
     }
 
     function handleAprovado(cartao) {
@@ -543,12 +537,16 @@
       }
       const entry = document.createElement('div');
       entry.className = `log-entry flex gap-2.5 ${cor}`;
-      entry.innerHTML = `
-        <i class="fa-solid ${icon} text-[8px] mt-1.5 opacity-60 shrink-0"></i>
-        <div class="min-w-0">
-          <span class="break-all text-[13px] leading-snug">${mensagem}</span>
-        </div>
-      `;
+      const iconEl = document.createElement('i');
+      iconEl.className = `fa-solid ${icon} text-[8px] mt-1.5 opacity-60 shrink-0`;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'min-w-0';
+      const span = document.createElement('span');
+      span.className = 'break-all text-[13px] leading-snug';
+      span.textContent = mensagem;
+      wrapper.appendChild(span);
+      entry.appendChild(iconEl);
+      entry.appendChild(wrapper);
       history.insertBefore(entry, history.firstChild);
       document.getElementById('log-count').textContent = history.children.length + ' logs';
     }

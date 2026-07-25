@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, field_validator
+from playwright.async_api import async_playwright
 import uvicorn
 
 # ================= CONFIG =================
@@ -20,7 +21,7 @@ URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login")
 URL_MEUS_CARTOES = os.getenv("UNIMAR_URL_CARTOES", "https://digital.unimar.br/areadoaluno/conta/meuscartoes")
 EMAIL = os.getenv("UNIMAR_EMAIL", "")
 SENHA = os.getenv("UNIMAR_SENHA", "")
-NOME_FIXO = os.getenv("UNIMAR_NOME", "Bruna Mendes")
+NOME_FIXO = os.getenv("UNIMAR_NOME", "")
 MAX_TENTATIVAS = int(os.getenv("UNIMAR_MAX_TENTATIVAS", "3"))
 MAX_CANAIS = int(os.getenv("UNIMAR_MAX_CANAIS", "6"))
 
@@ -65,8 +66,6 @@ def garantir_playwright() -> bool:
         logger.exception("Erro ao instalar Chromium")
         return False
 
-PLAYWRIGHT_OK = garantir_playwright()
-
 # ================= ESTADO =================
 class Estado:
     def __init__(self):
@@ -106,9 +105,12 @@ async def inc_estado(campo: str, valor: int = 1) -> int:
         setattr(estado, campo, novo)
         return novo
 
-def calc_velocidade() -> tuple[float, int]:
-    elapsed = time.time() - estado.inicio_timestamp if estado.inicio_timestamp else 0
-    velocidade = estado.tarefas_concluidas / (elapsed / 60) if elapsed > 0 else 0
+async def calc_velocidade() -> tuple[float, int]:
+    async with estado.lock:
+        inicio = estado.inicio_timestamp
+        concluidas = estado.tarefas_concluidas
+    elapsed = time.time() - inicio if inicio else 0
+    velocidade = concluidas / (elapsed / 60) if elapsed > 0 else 0
     return round(velocidade, 1), round(elapsed)
 
 async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
@@ -129,13 +131,21 @@ async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
 
     logger.info("Broadcast %s enviado para %d cliente(s)", tipo, len(clients) - len(mortos))
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.error("Erro no broadcast de log: %s", exc)
+
 def log(app: FastAPI, msg: str) -> None:
     timestamp = time.strftime("%H:%M:%S")
     full = f"[{timestamp}] {msg}"
     logger.info(msg)
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(broadcast(app, "log", {"mensagem": full}))
+        task = loop.create_task(broadcast(app, "log", {"mensagem": full}))
+        task.add_done_callback(_log_task_exception)
     except RuntimeError:
         pass
 
@@ -154,7 +164,7 @@ class IniciarRequest(BaseModel):
 # ================= FASTAPI =================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.playwright_ok = PLAYWRIGHT_OK
+    app.state.playwright_ok = await asyncio.to_thread(garantir_playwright)
     app.state.job_task = None
     app.state.browser = None
     yield
@@ -329,8 +339,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     log(app, f"[Canal {id_worker}][{indice}] ✅ APROVADO")
                     await broadcast(app, "aprovado", {"cartao": linha})
                     await inc_estado("aprovados", 1)
-                    with open("aprovados.txt", "a", encoding="utf-8") as f:
-                        f.write(f"{linha}\n")
+                    await asyncio.to_thread(_escrever_aprovado, linha)
                     await inc_estado("tarefas_concluidas", 1)
 
                 elif resultado == "reprovado":
@@ -353,7 +362,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await broadcast(app, "reprovado", {"cartao": linha})
                     await inc_estado("tarefas_concluidas", 1)
 
-                velocidade, elapsed = calc_velocidade()
+                velocidade, elapsed = await calc_velocidade()
                 await broadcast(app, "progresso", {
                     "processados": estado.tarefas_concluidas,
                     "total": estado.total_cartoes,
@@ -377,8 +386,16 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
         await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
         log(app, f"[Canal {id_worker}] Finalizado")
 
+def _escrever_aprovado(linha: str) -> None:
+    with open("aprovados.txt", "a", encoding="utf-8") as f:
+        f.write(f"{linha}\n")
+
 async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: FastAPI) -> None:
     try:
+        if not NOME_FIXO:
+            log(app, "[ERRO] UNIMAR_NOME não configurado!")
+            return
+
         linhas = list(dict.fromkeys([l.strip() for l in texto_cartoes.splitlines() if l.strip()]))
         if not linhas:
             log(app, "[ERRO] Nenhum cartão fornecido")
@@ -399,7 +416,6 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         for idx, linha in enumerate(linhas, 1):
             await fila.put((idx, linha, 1))
 
-        from playwright.async_api import async_playwright
         async with async_playwright() as pw:
             if not await login_mestre(pw, app):
                 log(app, "[ERRO] Falha na autenticação")
@@ -456,7 +472,7 @@ async def parar():
 
 @app.get("/api/status")
 async def status():
-    velocidade, elapsed = calc_velocidade()
+    velocidade, elapsed = await calc_velocidade()
     return {
         "rodando": estado.rodando,
         "total": estado.total_cartoes,
@@ -470,6 +486,24 @@ async def status():
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    async with estado.lock:
+        estado.clients.add(websocket)
+    logger.info("WebSocket conectado: %s", websocket.client)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Cliente pode enviar pong ou outros comandos
+    except WebSocketDisconnect:
+        logger.info("WebSocket desconectado: %s", websocket.client)
+    except Exception:
+        logger.exception("Erro no WebSocket")
+    finally:
+        async with estado.lock:
+            estado.clients.discard(websocket)
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -485,6 +519,6 @@ async def index():
 if __name__ == "__main__":
     print("=" * 50)
     print(f"🚀 Unimar Card Tester iniciando em 0.0.0.0:{PORT}")
-    print(f"🎭 Playwright: {'✅' if PLAYWRIGHT_OK else '❌'}")
+    print("🎭 Playwright será verificado no startup")
     print("=" * 50)
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
