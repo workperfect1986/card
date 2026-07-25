@@ -112,7 +112,180 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
         estado["clients"].discard(websocket)
 
-# ===================== FUNÇÕES =====================
+# ===================== FUNÇÕES AUXILIARES =====================
+
+def _locator_remover(page):
+    """Retorna um locator robusto para o botão/link 'Remover' que tolera espaços."""
+    return (
+        page.locator('button:has-text("Remover")')
+        .or_(page.locator('a:has-text("Remover")'))
+        .or_(page.locator('.mdl-button:has-text("Remover")'))
+        .or_(page.get_by_text("Remover", exact=False))
+    )
+
+async def _contar_removers(page) -> int:
+    """Conta quantos elementos 'Remover' existem na página."""
+    try:
+        # Usa JavaScript para contar elementos com texto trimmado igual a "Remover"
+        return await page.evaluate("""() => {
+            const todos = document.querySelectorAll('button, a, span, div, input');
+            let count = 0;
+            for (const el of todos) {
+                if (el.textContent.trim() === 'Remover') count++;
+            }
+            return count;
+        }""")
+    except Exception:
+        # Fallback via Playwright locator
+        try:
+            return await _locator_remover(page).count()
+        except Exception:
+            return 0
+
+async def _clicar_confirmar_js(page) -> bool:
+    """Tenta clicar no botão de confirmação via JavaScript."""
+    try:
+        resultado = await page.evaluate("""() => {
+            const textos = ['Sim', 'Confirmar', 'Excluir', 'Remover', 'OK', 'Yes'];
+            const botoes = Array.from(document.querySelectorAll('button, a, input[type="submit"], .btn, [role="button"]'));
+            for (const btn of botoes) {
+                const txt = btn.textContent.trim().toLowerCase();
+                const val = (btn.value || '').toLowerCase();
+                if (textos.some(t => txt.includes(t.toLowerCase()) || val.includes(t.toLowerCase()))) {
+                    btn.click();
+                    return {ok: true, texto: btn.textContent.trim()};
+                }
+            }
+            // Fallback: procura por modal/dialog e clica no primeiro botão
+            const modalBtns = document.querySelectorAll('.modal button, .swal2-confirm, .confirm, [class*="confirm"]');
+            if (modalBtns.length > 0) {
+                modalBtns[0].click();
+                return {ok: true, texto: modalBtns[0].textContent.trim()};
+            }
+            return {ok: false};
+        }""")
+        return resultado.get("ok", False)
+    except Exception:
+        return False
+
+# ===================== FAXINA =====================
+
+async def limpar_cartoes_antigos(page):
+    """Faxina robusta: remove TODOS os cartões, um por um, com múltiplas estratégias."""
+    try:
+        log("[Faxina] Iniciando limpeza...")
+        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(2.0)
+
+        removidos = 0
+        max_ciclos = 100
+        ciclo = 0
+
+        while ciclo < max_ciclos:
+            ciclo += 1
+
+            if estado.get("cancelado"):
+                log("[Faxina] Cancelado pelo usuário.")
+                break
+
+            # Conta quantos "Remover" existem via JS
+            qtd_antes = await _contar_removers(page)
+            log(f"[Faxina] Ciclo {ciclo} — {qtd_antes} cartão(ões) encontrado(s)")
+
+            if qtd_antes == 0:
+                log("[Faxina] Nenhum cartão restante. Limpo! ✅")
+                break
+
+            # ESTRATÉGIA 1: Playwright locator por texto (tolerância a espaços)
+            remover = _locator_remover(page).first
+            clicou = False
+
+            try:
+                await remover.wait_for(state="visible", timeout=3000)
+                await remover.scroll_into_view_if_needed()
+                await asyncio.sleep(0.3)
+                await remover.click(force=True)
+                clicou = True
+                log("[Faxina] Clicou via locator (force)")
+            except Exception:
+                pass
+
+            # ESTRATÉGIA 2: JavaScript direto
+            if not clicou:
+                try:
+                    resultado = await page.evaluate("""() => {
+                        const els = Array.from(document.querySelectorAll('button, a, span, div'))
+                            .filter(el => el.textContent.trim() === 'Remover');
+                        if (els.length > 0) {
+                            els[0].scrollIntoView({behavior: 'instant', block: 'center'});
+                            els[0].click();
+                            return {ok: true};
+                        }
+                        return {ok: false};
+                    }""")
+                    clicou = resultado.get("ok", False)
+                    if clicou:
+                        log("[Faxina] Clicou via JavaScript")
+                except Exception:
+                    pass
+
+            if not clicou:
+                log("[Faxina] Não conseguiu clicar em 'Remover'. Recarregando...")
+                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.5)
+                continue
+
+            # Aguarda o modal/diálogo de confirmação
+            await asyncio.sleep(0.8)
+
+            confirmou = False
+
+            # ESTRATÉGIA A: Playwright locator por texto do botão de confirmação
+            for texto in ["Sim", "Confirmar", "Excluir", "OK", "Yes"]:
+                try:
+                    btn = (
+                        page.get_by_role("button", name=texto)
+                        .or_(page.get_by_text(texto, exact=False))
+                        .or_(page.locator(f'button:has-text("{texto}")'))
+                    ).first
+                    await btn.wait_for(state="visible", timeout=2000)
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(force=True)
+                    confirmou = True
+                    log(f"[Faxina] Confirmou via botão '{texto}'")
+                    break
+                except Exception:
+                    continue
+
+            # ESTRATÉGIA B: JavaScript no modal
+            if not confirmou:
+                confirmou = await _clicar_confirmar_js(page)
+                if confirmou:
+                    log("[Faxina] Confirmou via JavaScript")
+
+            if not confirmou:
+                log("[Faxina] Modal de confirmação não encontrado. Tentando próximo...")
+                await asyncio.sleep(1.0)
+                continue
+
+            # Aguarda a remoção acontecer (verifica se a quantidade diminuiu)
+            await asyncio.sleep(1.5)
+            qtd_depois = await _contar_removers(page)
+
+            if qtd_depois < qtd_antes:
+                removidos += (qtd_antes - qtd_depois)
+                log(f"[Faxina] Removido com sucesso! ({qtd_depois} restantes)")
+                await asyncio.sleep(0.5)
+            else:
+                log(f"[Faxina] Quantidade não mudou ({qtd_depois}). Recarregando...")
+                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.5)
+
+        log(f"[Faxina] Total removido: {removidos} cartão(ões)")
+    except Exception as e:
+        log(f"[Faxina] Erro crítico: {e}")
+
+# ===================== LOGIN =====================
 
 async def sessao_e_valida(playwright) -> bool:
     """Testa rapidamente se a sessão salva ainda funciona (Modo Fast)."""
@@ -140,89 +313,16 @@ async def sessao_e_valida(playwright) -> bool:
         page = await context.new_page()
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
         await asyncio.sleep(0.8)
-        valida = await page.get_by_role("button", name="Adicionar Cartão de Crédito").count() > 0
+        # Usa locator robusto para o botão de adicionar
+        btn_add = page.get_by_role("button", name="Adicionar Cartão de Crédito").or_(
+            page.get_by_text("Adicionar Cartão de Crédito", exact=False)
+        )
+        valida = await btn_add.count() > 0
         await context.close()
         await browser.close()
         return valida
     except Exception:
         return False
-
-async def limpar_cartoes_antigos(page):
-    """Faxina robusta: scroll, espera ativa, retry e verificação de sumiço do elemento."""
-    try:
-        log("[Faxina] Iniciando limpeza...")
-        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(1.5)
-
-        removidos = 0
-        max_iteracoes = 50  # Segurança contra loop infinito
-        iteracao = 0
-
-        while iteracao < max_iteracoes:
-            iteracao += 1
-
-            if estado.get("cancelado"):
-                log("[Faxina] Cancelado pelo usuário.")
-                break
-
-            # Atualiza a lista de botões a cada iteração
-            botoes_remover = page.get_by_role("button", name="Remover")
-            quantidade = await botoes_remover.count()
-
-            if quantidade == 0:
-                log("[Faxina] Nenhum botão 'Remover' encontrado. Limpo!")
-                break
-
-            # Pega o primeiro botão
-            botao = botoes_remover.first
-
-            # Garante que está visível e na viewport
-            try:
-                await botao.scroll_into_view_if_needed(timeout=3000)
-                await botao.wait_for(state="visible", timeout=3000)
-            except Exception:
-                log("[Faxina] Botão não ficou visível após scroll. Tentando próximo...")
-                await asyncio.sleep(0.5)
-                continue
-
-            # Clica com force e espera o diálogo/modal de confirmação
-            await botao.click(force=True)
-            await asyncio.sleep(0.6)
-
-            # Procura por qualquer botão de confirmação conhecido
-            confirm = (
-                page.get_by_role("button", name="Sim")
-                .or_(page.get_by_role("button", name="Confirmar"))
-                .or_(page.get_by_role("button", name="Excluir"))
-                .or_(page.get_by_role("button", name="Remover").nth(1))  # caso haja duplicidade
-            )
-
-            try:
-                await confirm.wait_for(state="visible", timeout=4000)
-            except Exception:
-                log("[Faxina] Diálogo de confirmação não apareceu. Recarregando...")
-                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(1.0)
-                continue
-
-            # Confirma a remoção
-            await confirm.click(force=True)
-
-            # Aguarda o botão sumir (indica que a remoção AJAX funcionou)
-            try:
-                await botao.wait_for(state="hidden", timeout=8000)
-                removidos += 1
-                await asyncio.sleep(0.4)
-            except Exception:
-                # Se não sumiu, dá uma segunda chance após refresh
-                log("[Faxina] Cartão não sumiu após confirmação. Recarregando...")
-                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(1.0)
-                continue
-
-        log(f"[Faxina] {removidos} cartão(ões) removido(s).")
-    except Exception as e:
-        log(f"[Faxina] Erro: {e}")
 
 async def login_mestre(playwright):
     """Login com Modo Fast (reuse) e Modo Full (UI)."""
@@ -269,6 +369,8 @@ async def login_mestre(playwright):
         log(f"[ERRO] Login falhou: {e}")
         return False
 
+# ===================== WORKER =====================
+
 async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
     """Worker otimizado com retentativa automática em caso de timeout."""
     estado["canais_ativos"] += 1
@@ -294,7 +396,6 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
             try:
                 item = await asyncio.wait_for(fila.get(), timeout=2.0)
             except asyncio.TimeoutError:
-                # Aguarda um pouco mais para dar tempo de novos itens entrarem (retentativas)
                 await asyncio.sleep(0.5)
                 if fila.empty() and estado["tarefas_concluidas"] >= estado["total_cartoes"]:
                     break
@@ -302,7 +403,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
 
             indice, linha, tentativa = item
             resultado = "timeout"
-            deve_contar_como_concluido = True  # Controla se conta no progresso total
+            deve_contar_como_concluido = True
 
             try:
                 partes = [x.strip() for x in linha.split("|")]
@@ -339,16 +440,17 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                 await page.get_by_label("Ano").select_option(ano)
                 await page.get_by_role("textbox", name="CVV").fill(cvv)
 
-                botoes_antes = await page.get_by_role("button", name="Remover").count()
+                # CORREÇÃO: usa _contar_removers() ao invés de get_by_role("button", name="Remover")
+                botoes_antes = await _contar_removers(page)
                 await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
-                # Loop ativo de detecção (muito mais rápido que networkidle)
+                # Loop ativo de detecção
                 for _ in range(40):
                     if not estado["rodando"] or estado["cancelado"]:
                         resultado = "cancelado"
                         break
 
-                    botoes_atual = await page.get_by_role("button", name="Remover").count()
+                    botoes_atual = await _contar_removers(page)
                     if botoes_atual > botoes_antes:
                         resultado = "aprovado"
                         break
@@ -379,7 +481,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                     if tentativa < MAX_TENTATIVAS:
                         log(f"[Canal {id_worker}][Item {indice}] ⚠️ Timeout — Re-enfileirando (retentativa {tentativa + 1}/{MAX_TENTATIVAS})")
                         await fila.put((indice, linha, tentativa + 1))
-                        deve_contar_como_concluido = False  # NÃO conta no progresso total
+                        deve_contar_como_concluido = False
                     else:
                         log(f"[Canal {id_worker}][Item {indice}] ❌ Timeout (máx. de {MAX_TENTATIVAS} tentativas atingido)")
                         await broadcast("reprovado", {"cartao": f"{numero}|{mes}|{ano}|{cvv}"})
@@ -415,6 +517,8 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
         estado["canais_ativos"] -= 1
         await broadcast("status", {"canais_ativos": estado["canais_ativos"]})
         log(f"[Canal {id_worker}] Finalizado")
+
+# ===================== PROCESSAMENTO =====================
 
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     try:
