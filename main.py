@@ -148,37 +148,77 @@ async def sessao_e_valida(playwright) -> bool:
         return False
 
 async def limpar_cartoes_antigos(page):
-    """Faxina otimizada: loop while condicional, sem range fixo."""
+    """Faxina robusta: scroll, espera ativa, retry e verificação de sumiço do elemento."""
     try:
         log("[Faxina] Iniciando limpeza...")
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(1.5)
 
         removidos = 0
-        while True:
-            if estado["cancelado"]:
+        max_iteracoes = 50  # Segurança contra loop infinito
+        iteracao = 0
+
+        while iteracao < max_iteracoes:
+            iteracao += 1
+
+            if estado.get("cancelado"):
                 log("[Faxina] Cancelado pelo usuário.")
                 break
 
-            botao = page.get_by_role("button", name="Remover").first
+            # Atualiza a lista de botões a cada iteração
+            botoes_remover = page.get_by_role("button", name="Remover")
+            quantidade = await botoes_remover.count()
+
+            if quantidade == 0:
+                log("[Faxina] Nenhum botão 'Remover' encontrado. Limpo!")
+                break
+
+            # Pega o primeiro botão
+            botao = botoes_remover.first
+
+            # Garante que está visível e na viewport
             try:
-                visivel = await botao.is_visible()
+                await botao.scroll_into_view_if_needed(timeout=3000)
+                await botao.wait_for(state="visible", timeout=3000)
             except Exception:
-                break
-            if not visivel:
-                break
+                log("[Faxina] Botão não ficou visível após scroll. Tentando próximo...")
+                await asyncio.sleep(0.5)
+                continue
 
+            # Clica com force e espera o diálogo/modal de confirmação
             await botao.click(force=True)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.6)
 
-            confirm = page.get_by_role("button", name="Sim").or_(page.get_by_role("button", name="Confirmar"))
-            if await confirm.is_visible():
-                await confirm.click(force=True)
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                await asyncio.sleep(0.7)
+            # Procura por qualquer botão de confirmação conhecido
+            confirm = (
+                page.get_by_role("button", name="Sim")
+                .or_(page.get_by_role("button", name="Confirmar"))
+                .or_(page.get_by_role("button", name="Excluir"))
+                .or_(page.get_by_role("button", name="Remover").nth(1))  # caso haja duplicidade
+            )
+
+            try:
+                await confirm.wait_for(state="visible", timeout=4000)
+            except Exception:
+                log("[Faxina] Diálogo de confirmação não apareceu. Recarregando...")
+                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.0)
+                continue
+
+            # Confirma a remoção
+            await confirm.click(force=True)
+
+            # Aguarda o botão sumir (indica que a remoção AJAX funcionou)
+            try:
+                await botao.wait_for(state="hidden", timeout=8000)
                 removidos += 1
-            else:
-                break
+                await asyncio.sleep(0.4)
+            except Exception:
+                # Se não sumiu, dá uma segunda chance após refresh
+                log("[Faxina] Cartão não sumiu após confirmação. Recarregando...")
+                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(1.0)
+                continue
 
         log(f"[Faxina] {removidos} cartão(ões) removido(s).")
     except Exception as e:
@@ -303,7 +343,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                 await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
                 # Loop ativo de detecção (muito mais rápido que networkidle)
-                for _ in range(60):   # ~30 segundos
+                for _ in range(40):
                     if not estado["rodando"] or estado["cancelado"]:
                         resultado = "cancelado"
                         break
@@ -320,7 +360,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                         resultado = "reprovado"
                         break
 
-                    await asyncio.sleep(0.7)  # em vez de 0.5
+                    await asyncio.sleep(0.5)
 
                 # ========== TRATAMENTO DE RESULTADO COM RETENTATIVA ==========
                 if resultado == "aprovado":
