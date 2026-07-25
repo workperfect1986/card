@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, field_validator
 import uvicorn
 
@@ -384,33 +384,15 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    try:
-        with open("templates/index.html", encoding="utf-8") as f:
-            return f.read()
-    except:
-        # HTML de fallback simplificado (já temos, mas pode usar o anterior se quiser)
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head><title>Unimar Card Tester</title><meta charset="UTF-8">
-        <style>body{background:#0a0a0a;color:#fff;font-family:sans-serif;padding:20px}button{padding:10px;margin:5px}
-        textarea{width:100%;height:200px;background:#1a1a1a;color:#fff;border:1px solid #333;padding:10px}
-        #log{background:#1a1a1a;padding:10px;height:200px;overflow-y:auto;font-family:monospace;font-size:12px}</style></head>
-        <body>
-        <h1>🚀 Unimar Card Tester</h1>
-        <textarea id="lista" placeholder="4111111111111111|12|2028|123"></textarea>
-        <select id="canais"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4" selected>4</option><option value="5">5</option><option value="6">6</option></select>
-        <button onclick="fetch('/api/iniciar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lista:document.getElementById('lista').value,canais:parseInt(document.getElementById('canais').value)})})">INICIAR</button>
-        <button onclick="fetch('/api/parar',{method:'POST'})">PARAR</button>
-        <div id="log"></div>
-        <script>
-            const ws = new WebSocket(`ws://${location.host}/ws`);
-            ws.onmessage = e => {
-                const d = JSON.parse(e.data);
-                if(d.type==='log') document.getElementById('log').innerHTML += `<div>${d.mensagem}</div>`;
-            }
-        </script>
-        </body></html>"""
+    """Carrega o template HTML externo."""
+    template_path = Path("templates/index.html")
+    if template_path.is_file():
+        return template_path.read_text(encoding="utf-8")
+    else:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."}
+        )
 
 # ================= INICIALIZAÇÃO =================
 if __name__ == "__main__":
