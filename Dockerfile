@@ -8,16 +8,35 @@ RUN apt-get update && apt-get install -y \
     libgtk-3-0 libnspr4 libnss3 \
     libwayland-client0 libxcomposite1 \
     libxdamage1 libxfixes3 libxkbcommon0 \
-    libxrandr2 xdg-utils \
+    libxrandr2 xdg-utils curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install playwright fastapi uvicorn pydantic websockets && \
+# Instalar Playwright PRIMEIRO (mais pesado)
+RUN pip install playwright && \
     playwright install-deps chromium && \
     playwright install chromium
 
+# Definir diretório de trabalho
 WORKDIR /app
-COPY . .
-RUN mkdir -p templates
 
+# Copiar requirements
+COPY requirements.txt .
+
+# Instalar outras dependências
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar TODO o código
+COPY . .
+
+# Verificar estrutura de arquivos
+RUN echo "=== ESTRUTURA DE ARQUIVOS ===" && \
+    ls -la && \
+    echo "=== TEMPLATES ===" && \
+    ls -la templates/ 2>/dev/null || echo "Pasta templates não encontrada" && \
+    mkdir -p templates
+
+# Expor porta
 EXPOSE 8000
+
+# Iniciar
 CMD ["python", "main.py"]
