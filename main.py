@@ -574,26 +574,23 @@ async def index():
 
 # ===================== STARTUP =====================
 if __name__ == "__main__":
-    # Railway define a porta via variável PORT
+    import sys
+    
+    # Railway sempre usa $PORT
     PORT = int(os.getenv("PORT", "8000"))
-    HOST = "0.0.0.0"  # Obrigatório para Railway
     
-    print(f"\n{'='*50}")
-    print(f"🚀 Iniciando servidor...")
-    print(f"📍 Host: {HOST}")
-    print(f"🔌 Porta: {PORT}")
-    print(f"📊 Health Check: http://{HOST}:{PORT}/api/health")
-    print(f"{'='*50}\n")
+    print(f"Python version: {sys.version}", flush=True)
+    print(f"Starting server on 0.0.0.0:{PORT}", flush=True)
+    print(f"Health check available at /api/health", flush=True)
     
-    # Verificar variáveis obrigatórias
-    if not Config.EMAIL or not Config.SENHA:
-        print("⚠️  ATENÇÃO: Credenciais não configuradas!")
-        print("   Configure UNIMAR_EMAIL e UNIMAR_SENHA no Railway")
-    
-    # Iniciar servidor
-    uvicorn.run(
-        app,  # Passar o objeto app diretamente
-        host=HOST,
+    # Configuração explícita para Railway
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
         port=PORT,
-        log_level="info"
+        log_level="info",
+        access_log=True
     )
+    
+    server = uvicorn.Server(config)
+    server.run()
