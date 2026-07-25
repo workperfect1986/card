@@ -3,9 +3,11 @@ import json
 import os
 import random
 import time
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, Set
+
 
 import structlog
 import uvicorn
@@ -538,7 +540,21 @@ async def worker_contexto(id_worker: int, browser: Browser, fila: asyncio.Queue)
         await estado.decrement("canais_ativos")
         await broadcast("status", {"canais_ativos": estado.get("canais_ativos")})
         await log_message(f"[Canal {id_worker}] Finalizado")
+        
+# ===================== CONFIGURAÇÃO RAILWAY =====================
+# Railway define a porta via variável de ambiente PORT
+PORT = int(os.getenv("PORT", 5000))
 
+# Garante que diretórios necessários existam
+Path("templates").mkdir(exist_ok=True)
+Path("aprovados.txt").touch(exist_ok=True)
+
+# Verifica variáveis obrigatórias
+if not os.getenv("UNIMAR_EMAIL") or not os.getenv("UNIMAR_SENHA"):
+    print("⚠️  ATENÇÃO: Variáveis UNIMAR_EMAIL e UNIMAR_SENHA não configuradas!")
+    print("Configure-as nas variáveis de ambiente do Railway:")
+    print("https://railway.app/dashboard -> Seu Projeto -> Variables")
+    
 # ===================== PROCESSAMENTO =====================
 async def processar_cartoes(texto_cartoes: str, num_canais: int):
     """Processa lista de cartões com múltiplos workers."""
@@ -668,4 +684,15 @@ async def index():
         return f.read()
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=False)
+    # Configuração para Railway
+    print(f"🚀 Iniciando servidor na porta {PORT}")
+    print(f"📊 Dashboard: https://web.railway.app")
+    
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=PORT,
+        workers=1,  # Railway recomenda 1 worker por instância
+        log_level="info",
+        reload=False  # Desabilitado em produção
+    )
