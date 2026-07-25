@@ -303,7 +303,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                 await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
 
                 # Loop ativo de detecção (muito mais rápido que networkidle)
-                for _ in range(40):
+                for _ in range(60):   # ~30 segundos
                     if not estado["rodando"] or estado["cancelado"]:
                         resultado = "cancelado"
                         break
@@ -320,7 +320,7 @@ async def worker_contexto(id_worker: int, browser, fila: asyncio.Queue):
                         resultado = "reprovado"
                         break
 
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.7)  # em vez de 0.5
 
                 # ========== TRATAMENTO DE RESULTADO COM RETENTATIVA ==========
                 if resultado == "aprovado":
