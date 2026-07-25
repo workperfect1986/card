@@ -276,10 +276,13 @@
         warning: 'fa-triangle-exclamation text-yellow-400'
       };
       toast.className = `toast toast-${type}`;
-      toast.innerHTML = `
-        <i class="fa-solid ${icons[type]}"></i>
-        <span class="text-sm text-zinc-200">${message}</span>
-      `;
+      const iconEl = document.createElement('i');
+      iconEl.className = `fa-solid ${icons[type]}`;
+      const msgSpan = document.createElement('span');
+      msgSpan.className = 'text-sm text-zinc-200';
+      msgSpan.textContent = message;
+      toast.appendChild(iconEl);
+      toast.appendChild(msgSpan);
       container.appendChild(toast);
       if (container.children.length > 5) {
         container.removeChild(container.firstChild);
@@ -424,6 +427,34 @@
       setTimeout(conectarWebSocket, delay);
     }
 
+    // ==================== RESET UI ====================
+    function resetarUI() {
+      aprovados = 0;
+      reprovados = 0;
+      processados = 0;
+      listaAprovados = [];
+      listaReprovados = [];
+      totalCartoes = 0;
+      startTime = null;
+
+      document.getElementById('approved-count').textContent = '0';
+      document.getElementById('rejected-count').textContent = '0';
+      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
+      document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>';
+      document.getElementById('progress').style.width = '0%';
+      document.getElementById('progress-text').textContent = '0%';
+      document.getElementById('current').textContent = '0';
+      document.getElementById('total').textContent = '0';
+      document.getElementById('status-text-progress').textContent = 'Aguardando início...';
+      document.getElementById('eta-text').textContent = '--:--';
+      document.getElementById('stat-taxa').textContent = '0%';
+      document.getElementById('stat-velocidade').innerHTML = '0 <span class="text-xs text-zinc-500">/min</span>';
+      document.getElementById('stat-tempo').textContent = '00:00';
+      document.getElementById('history').innerHTML = '';
+      document.getElementById('log-count').textContent = '0 logs';
+      pararTimer();
+    }
+
     // ==================== HANDLERS ====================
     function handleStatus(data) {
       if (data.canais_ativos !== undefined) {
@@ -441,28 +472,7 @@
 
       // ZERA TUDO se não há teste rodando (ex.: recarregou a página)
       if (data.rodando === false && !testeIniciado) {
-        aprovados = 0;
-        reprovados = 0;
-        processados = 0;
-        listaAprovados = [];
-        listaReprovados = [];
-        totalCartoes = 0;
-        startTime = null;
-
-        document.getElementById('approved-count').textContent = '0';
-        document.getElementById('rejected-count').textContent = '0';
-        document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
-        document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>';
-        document.getElementById('progress').style.width = '0%';
-        document.getElementById('progress-text').textContent = '0%';
-        document.getElementById('current').textContent = '0';
-        document.getElementById('total').textContent = '0';
-        document.getElementById('status-text-progress').textContent = 'Aguardando início...';
-        document.getElementById('eta-text').textContent = '--:--';
-        document.getElementById('stat-taxa').textContent = '0%';
-        document.getElementById('stat-velocidade').innerHTML = '0 <span class="text-xs text-zinc-500">/min</span>';
-        document.getElementById('stat-tempo').textContent = '00:00';
-        pararTimer();
+        resetarUI();
       }
 
       if (data.rodando === false && testeIniciado && processados > 0 && processados >= totalCartoes) {
@@ -665,27 +675,12 @@
         showToast("Nenhum cartão válido encontrado!", 'error');
         return;
       }
-      processados = 0;
-      aprovados = 0;
-      reprovados = 0;
-      listaAprovados = [];
-      listaReprovados = [];
+      resetarUI();
       startTime = Date.now();
-
-      document.getElementById('approved-count').textContent = '0';
-      document.getElementById('rejected-count').textContent = '0';
-      document.getElementById('approved-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum aprovado ainda</p>';
-      document.getElementById('rejected-list').innerHTML = '<p class="text-zinc-500 text-center py-4">Nenhum reprovado ainda</p>';
-      document.getElementById('progress').style.width = '0%';
-      document.getElementById('progress-text').textContent = '0%';
-      document.getElementById('current').textContent = '0';
+      totalCartoes = lista.split('\n').filter(l => l.trim()).length;
       document.getElementById('total').textContent = totalCartoes;
       document.getElementById('status-text-progress').textContent = "Iniciando...";
       document.getElementById('eta-text').textContent = 'Calculando...';
-      document.getElementById('history').innerHTML = '';
-      document.getElementById('log-count').textContent = '0 logs';
-      document.getElementById('stat-taxa').textContent = '0%';
-      document.getElementById('stat-velocidade').innerHTML = '0 <span class="text-xs text-zinc-500">/min</span>';
 
       document.getElementById('lista-cartoes').disabled = true;
 

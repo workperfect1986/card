@@ -3,6 +3,7 @@ import time
 import asyncio
 import subprocess
 import random
+import datetime
 import logging
 from pathlib import Path
 from typing import Set, Optional
@@ -83,15 +84,6 @@ class Estado:
 estado = Estado()
 
 # ================= HELPERS =================
-async def estado_snapshot() -> dict:
-    async with estado.lock:
-        return {
-            "rodando": estado.rodando,
-            "total": estado.total_cartoes,
-            "processados": estado.tarefas_concluidas,
-            "aprovados": estado.aprovados,
-            "canais_ativos": estado.canais_ativos,
-        }
 
 async def set_estado(**kwargs) -> None:
     async with estado.lock:
@@ -161,13 +153,33 @@ class IniciarRequest(BaseModel):
             raise ValueError(f"Canais deve ser entre 1 e {MAX_CANAIS}")
         return v
 
+# ================= WEBSOCKET KEEPALIVE =================
+async def _ws_keepalive():
+    """Envia ping a cada 30s para manter conexões WebSocket vivas."""
+    while True:
+        await asyncio.sleep(30)
+        async with estado.lock:
+            clients = list(estado.clients)
+        for client in clients:
+            try:
+                await client.send_json({"type": "ping"})
+            except Exception:
+                async with estado.lock:
+                    estado.clients.discard(client)
+
 # ================= FASTAPI =================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.playwright_ok = await asyncio.to_thread(garantir_playwright)
     app.state.job_task = None
     app.state.browser = None
+    keepalive_task = asyncio.create_task(_ws_keepalive())
     yield
+    keepalive_task.cancel()
+    try:
+        await keepalive_task
+    except asyncio.CancelledError:
+        pass
     if estado.task and not estado.task.done():
         estado.cancelado = True
         estado.rodando = False
@@ -187,7 +199,11 @@ async def sessao_valida(playwright) -> bool:
         return False
     try:
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
-        context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
+        context = await browser.new_context(
+            storage_state=str(SESSAO_PATH),
+            viewport=VIEWPORT,
+            user_agent=USER_AGENT,
+        )
         page = await context.new_page()
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
         await asyncio.sleep(0.8)
@@ -258,6 +274,35 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
         logger.exception("[ERRO] Login falhou")
         return False
 
+# ================= VALIDAÇÃO =================
+def validar_luhn(numero: str) -> bool:
+    """Valida número de cartão pelo algoritmo de Luhn."""
+    digits = [int(d) for d in numero if d.isdigit()]
+    if len(digits) < 13 or len(digits) > 19:
+        return False
+    checksum = 0
+    for i, d in enumerate(reversed(digits)):
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        checksum += d
+    return checksum % 10 == 0
+
+def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
+    """Retorna mensagem de erro ou None se válido."""
+    if not numero.isdigit() or not validar_luhn(numero):
+        return "Número inválido (Luhn)"
+    if not mes.isdigit() or not (1 <= int(mes) <= 12):
+        return "Mês inválido"
+    if not ano.isdigit() or int(ano) < datetime.datetime.now().year:
+        return "Ano expirado"
+    if not cvv.isdigit() or len(cvv) not in (3, 4):
+        return "CVV inválido"
+    return None
+
+_ERRO_KEYWORDS = ["inválida", "recusado", "erro", "não foi possível", "inválido"]
+
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
     try:
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
@@ -284,9 +329,11 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
                 return "aprovado"
 
             try:
-                body = (await page.locator("body").inner_text()).lower()
-                if any(x in body for x in ["inválida", "recusado", "erro", "não foi possível", "inválido"]):
-                    return "reprovado"
+                erros = page.locator(".alert, .toast, .notification, [role='alert']")
+                if await erros.count() > 0:
+                    texto = (await erros.first.inner_text()).lower()
+                    if any(x in texto for x in _ERRO_KEYWORDS):
+                        return "reprovado"
             except Exception:
                 pass
 
@@ -297,22 +344,28 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         logger.exception("Erro em processar_cartao")
         return "erro"
 
+async def _criar_contexto_worker(browser):
+    """Cria um novo contexto e página para um worker."""
+    context = await browser.new_context(
+        storage_state=str(SESSAO_PATH),
+        viewport=VIEWPORT,
+        user_agent=USER_AGENT,
+    )
+    page = await context.new_page()
+    page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+    return context, page
+
 async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> None:
     await inc_estado("canais_ativos", 1)
     await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
 
     context = None
+    page = None
     try:
         await asyncio.sleep(id_worker * 1.2)
         log(app, f"[Canal {id_worker}] Iniciando")
 
-        context = await browser.new_context(
-            storage_state=str(SESSAO_PATH),
-            viewport=VIEWPORT,
-            user_agent=USER_AGENT,
-        )
-        page = await context.new_page()
-        page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+        context, page = await _criar_contexto_worker(browser)
 
         while estado.rodando and not estado.cancelado:
             try:
@@ -331,9 +384,32 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     continue
 
                 numero, mes, ano, cvv = partes
+
+                # Validação rápida antes de usar o browser
+                erro_validacao = validar_cartao(numero, mes, ano, cvv)
+                if erro_validacao:
+                    log(app, f"[Canal {id_worker}][{indice}] ❌ {erro_validacao}")
+                    await broadcast(app, "reprovado", {"cartao": linha})
+                    await inc_estado("tarefas_concluidas", 1)
+                    continue
+
                 log(app, f"[Canal {id_worker}][{indice}] ****{numero[-4:]}")
 
-                resultado = await processar_cartao(page, numero, mes, ano, cvv)
+                try:
+                    resultado = await processar_cartao(page, numero, mes, ano, cvv)
+                except Exception:
+                    # Page crashou — recriar context e page
+                    logger.exception("[Canal %s] Page crash, recriando...", id_worker)
+                    log(app, f"[Canal {id_worker}] ⚠️ Recriando contexto...")
+                    try:
+                        if context:
+                            await context.close()
+                    except Exception:
+                        pass
+                    context, page = await _criar_contexto_worker(browser)
+                    # Re-enfileirar o cartão para retry
+                    await fila.put((indice, linha, tentativa))
+                    continue
 
                 if resultado == "aprovado":
                     log(app, f"[Canal {id_worker}][{indice}] ✅ APROVADO")
@@ -505,15 +581,22 @@ async def websocket_endpoint(websocket: WebSocket):
         async with estado.lock:
             estado.clients.discard(websocket)
 
+_cached_template: str | None = None
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    template_path = Path("templates/index.html")
-    if template_path.is_file():
-        return template_path.read_text(encoding="utf-8")
-    return JSONResponse(
-        status_code=404,
-        content={"detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."}
-    )
+    global _cached_template
+    if _cached_template is None:
+        template_path = Path("templates/index.html")
+        if not template_path.is_file():
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."}
+            )
+        _cached_template = await asyncio.to_thread(
+            template_path.read_text, encoding="utf-8"
+        )
+    return HTMLResponse(content=_cached_template)
 
 # ================= MAIN =================
 if __name__ == "__main__":

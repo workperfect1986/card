@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y \
     wget gnupg ca-certificates \
@@ -11,14 +11,14 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 xdg-utils curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install playwright && \
-    playwright install-deps chromium && \
-    playwright install chromium
-
+FROM base AS deps
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY . .
+RUN pip install --no-cache-dir -r requirements.txt \
+    && playwright install-deps chromium \
+    && playwright install chromium
 
+FROM deps AS app
+COPY . .
 EXPOSE 8000
 CMD ["python", "main.py"]
