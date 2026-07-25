@@ -1,5 +1,3 @@
-# Crie o arquivo
-cat > Dockerfile << 'EOF'
 FROM python:3.11-slim
 
 # Instalar dependências do sistema
@@ -52,9 +50,3 @@ EXPOSE 5000
 
 # Comando para iniciar
 CMD ["python", "main.py"]
-EOF
-
-# Adicione ao git
-git add Dockerfile .dockerignore
-git commit -m "fix: Corrige instalação do Playwright no Railway"
-git push
