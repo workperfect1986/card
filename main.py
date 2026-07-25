@@ -454,33 +454,134 @@ async def health():
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    try:
-        with open("templates/index.html", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return """
-        <html>
-        <head><title>Unimar Card Tester</title>
-        <style>body{background:#111;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-        .box{text-align:center;padding:40px;background:#1a1a1a;border-radius:20px;border:1px solid #333}
-        h1{color:#3b82f6;margin-bottom:10px}
-        .status{display:inline-block;width:10px;height:10px;background:#10b981;border-radius:50%;margin-right:8px;animation:pulse 2s infinite}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
-        .links{margin-top:20px;display:flex;gap:10px;justify-content:center}
-        a{color:#3b82f6;text-decoration:none;padding:8px 16px;background:#222;border-radius:8px;transition:all 0.3s}
-        a:hover{background:#333}
-        </style></head>
-        <body>
-        <div class="box">
-            <h1><span class="status"></span>🚀 API Online</h1>
-            <p style="color:#888">Unimar Card Tester v1.0</p>
-            <div class="links">
-                <a href="/api/health">Health Check</a>
-                <a href="/api/status">Status</a>
-                <a href="/docs">Documentação</a>
+    # Tentar encontrar o arquivo em vários locais possíveis
+    possiveis_caminhos = [
+        "templates/index.html",
+        "/app/templates/index.html",
+        "./templates/index.html",
+        "index.html",
+        "/app/index.html"
+    ]
+    
+    for caminho in possiveis_caminhos:
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                print(f"✅ Template encontrado em: {caminho}")
+                return f.read()
+        except:
+            continue
+    
+    # Se não encontrar, retornar HTML inline
+    print("⚠️ Template não encontrado, usando HTML inline")
+    return """
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Unimar Card Tester</title>
+        <style>
+            body { background: #0a0a0a; color: #fff; font-family: sans-serif; margin: 0; }
+            .container { max-width: 600px; margin: 50px auto; padding: 20px; }
+            textarea { width: 100%; height: 200px; background: #1a1a1a; color: #fff; border: 1px solid #333; padding: 10px; font-family: monospace; }
+            button { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; margin: 5px; }
+            button:hover { background: #2563eb; }
+            .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 20px 0; }
+            .stat { background: #1a1a1a; padding: 15px; border-radius: 10px; text-align: center; }
+            .log { background: #1a1a1a; height: 300px; overflow-y: auto; padding: 10px; font-family: monospace; font-size: 12px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🚀 Unimar Card Tester</h1>
+            
+            <div class="stats">
+                <div class="stat">
+                    <div id="aprovados" style="font-size: 24px; color: #10b981;">0</div>
+                    <small>Aprovados</small>
+                </div>
+                <div class="stat">
+                    <div id="reprovados" style="font-size: 24px; color: #ef4444;">0</div>
+                    <small>Reprovados</small>
+                </div>
+                <div class="stat">
+                    <div id="progresso" style="font-size: 24px; color: #3b82f6;">0%</div>
+                    <small>Progresso</small>
+                </div>
             </div>
+            
+            <textarea id="lista" placeholder="4111111111111111|12|2028|123
+5555555555554444|06|2027|321"></textarea>
+            
+            <div style="margin: 10px 0;">
+                <label>Canais: </label>
+                <select id="canais">
+                    <option value="1">1</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4" selected>4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                </select>
+            </div>
+            
+            <button onclick="iniciar()">▶ INICIAR</button>
+            <button onclick="parar()" style="background:#ef4444;">⏹ PARAR</button>
+            
+            <div class="log" id="log"></div>
         </div>
-        </body></html>"""
+        
+        <script>
+            let ws;
+            
+            function conectar() {
+                const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${protocol}//${location.host}/ws`);
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'log') {
+                        document.getElementById('log').innerHTML += `<div>${data.mensagem}</div>`;
+                        document.getElementById('log').scrollTop = document.getElementById('log').scrollHeight;
+                    }
+                    
+                    if (data.type === 'aprovado') {
+                        const el = document.getElementById('aprovados');
+                        el.textContent = parseInt(el.textContent) + 1;
+                    }
+                    
+                    if (data.type === 'reprovado') {
+                        const el = document.getElementById('reprovados');
+                        el.textContent = parseInt(el.textContent) + 1;
+                    }
+                    
+                    if (data.type === 'progresso') {
+                        const pct = Math.round((data.processados / data.total) * 100);
+                        document.getElementById('progresso').textContent = pct + '%';
+                    }
+                };
+            }
+            
+            function iniciar() {
+                const lista = document.getElementById('lista').value;
+                const canais = document.getElementById('canais').value;
+                
+                fetch('/api/iniciar', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({lista, canais: parseInt(canais)})
+                });
+            }
+            
+            function parar() {
+                fetch('/api/parar', {method: 'POST'});
+            }
+            
+            conectar();
+        </script>
+    </body>
+    </html>"""
 
 # ===================== INICIALIZAÇÃO =====================
 if __name__ == "__main__":
