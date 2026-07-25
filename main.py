@@ -1,52 +1,87 @@
 import os
+import sys
 import time
 import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-app = FastAPI()
+# ================= CONFIGURAÇÕES =================
+PORT = int(os.getenv("PORT", "8000"))
 
-# Estado simples
+# ================= ESTADO GLOBAL =================
 class Estado:
     def __init__(self):
         self.rodando = False
-        self.clients = set()
+        self.clients: set = set()
 
 estado = Estado()
 
-# WebSocket
+# ================= APLICAÇÃO =================
+app = FastAPI(title="Unimar Card Tester - Teste")
+
+# ================= WEBSOCKET =================
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     estado.clients.add(websocket)
+    print(f"🟢 Cliente conectado. Total: {len(estado.clients)}")
     try:
-        await websocket.send_json({"type": "status", "rodando": estado.rodando})
+        # Envia estado inicial
+        await websocket.send_json({
+            "type": "status",
+            "rodando": estado.rodando,
+            "clientes": len(estado.clients)
+        })
+        # Mantém conexão aberta, respondendo a mensagens
         while True:
             data = await websocket.receive_json()
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        pass
+        print("🔴 Cliente desconectado")
+    except Exception as e:
+        print(f"Erro WebSocket: {e}")
     finally:
         estado.clients.discard(websocket)
 
-# Rota principal com HTML inline
+# ================= ROTAS =================
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    """Página de teste simples com WebSocket."""
     return """
     <!DOCTYPE html>
     <html>
-    <head><title>Teste WebSocket</title></head>
-    <body style="background:#111;color:#fff;font-family:sans-serif;padding:20px">
-        <h1>🚀 WebSocket Test</h1>
-        <button onclick="testar()">Enviar Ping</button>
+    <head>
+        <title>Teste WebSocket</title>
+        <meta charset="UTF-8">
+        <style>
+            body { background:#0a0a0a; color:#fff; font-family:sans-serif; padding:20px; }
+            button { padding:10px; margin:5px; }
+            #log { background:#1a1a1a; padding:10px; margin-top:20px; height:200px; overflow-y:auto; font-family:monospace; font-size:12px; }
+        </style>
+    </head>
+    <body>
+        <h1>🚀 Teste WebSocket + Playwright</h1>
+        <button onclick="ping()">📡 Ping WebSocket</button>
+        <button onclick="testarPlaywright()">🧪 Testar Playwright</button>
         <div id="log"></div>
         <script>
             const ws = new WebSocket(`ws://${location.host}/ws`);
-            ws.onmessage = (e) => {
-                document.getElementById('log').innerHTML += '<p>' + JSON.stringify(JSON.parse(e.data)) + '</p>';
-            };
-            function testar() {
-                ws.send(JSON.stringify({type: "ping"}));
+            ws.onopen = () => log('✅ WebSocket conectado');
+            ws.onmessage = (e) => log('📩 ' + JSON.stringify(JSON.parse(e.data)));
+            ws.onclose = () => log('❌ WebSocket desconectado');
+
+            function log(msg) {
+                document.getElementById('log').innerHTML += `<div>${msg}</div>`;
+            }
+            function ping() {
+                ws.send(JSON.stringify({type: 'ping'}));
+            }
+            async function testarPlaywright() {
+                const resp = await fetch('/api/playwright-test');
+                const data = await resp.json();
+                log('🧪 Playwright: ' + JSON.stringify(data));
             }
         </script>
     </body>
@@ -54,9 +89,31 @@ async def index():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "timestamp": time.time()}
 
+@app.get("/api/playwright-test")
+async def playwright_test():
+    """Testa se o Playwright funciona corretamente."""
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+            )
+            page = await browser.new_page()
+            await page.goto("https://httpbin.org/get", timeout=15000)
+            content = await page.content()
+            await browser.close()
+            return {"status": "ok", "tamanho_pagina": len(content)}
+    except Exception as e:
+        return {"status": "erro", "mensagem": str(e)}
+
+# ================= INICIALIZAÇÃO =================
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    print(f"Iniciando em 0.0.0.0:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    print("=" * 50)
+    print(f"🚀 Iniciando servidor em 0.0.0.0:{PORT}")
+    print(f"🔗 Health: http://0.0.0.0:{PORT}/api/health")
+    print(f"📡 WebSocket: ws://0.0.0.0:{PORT}/ws")
+    print("=" * 50)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
