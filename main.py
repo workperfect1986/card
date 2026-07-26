@@ -351,10 +351,19 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
 
         botoes_antes = await page.get_by_role("button", name="Remover").count()
 
+        # Clique no botão registrar — sem force=True para não bypassar JS events
         try:
-            await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True, timeout=_TIMEOUT)
+            btn_registrar = page.get_by_role("button", name="Registrar Cartão de Crédito")
+            await btn_registrar.scroll_into_view_if_needed(timeout=_TIMEOUT)
+            await btn_registrar.click(timeout=_TIMEOUT)
         except Exception:
             return "erro:botao_registrar"
+
+        # Aguarda rede estabilizar após o clique
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass  # Continua mesmo se networkidle demorar
 
         url_pos_registro = page.url
 
@@ -373,6 +382,31 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             if botoes_atual > botoes_antes:
                 return "aprovado"
 
+            # Detecta se o modal/formulário fechou (form sumiu = algo aconteceu)
+            form_ainda_aberto = await page.get_by_role("textbox", name="Número do cartão").count() > 0
+            if not form_ainda_aberto:
+                # Modal fechou — verifica resultado agora
+                await asyncio.sleep(0.3)
+                botoes_apos = await page.get_by_role("button", name="Remover").count()
+                if botoes_apos > botoes_antes:
+                    return "aprovado"
+                # Modal fechou mas sem novo cartão = reprovado ou erro silencioso
+                try:
+                    erros = page.locator(
+                        ".alert, .toast, .notification, [role='alert'], "
+                        ".swal2-popup, .noty_body, .v-snackbar__content, "
+                        ".notyf__message, [class*='error'], [class*='danger'], "
+                        "[class*='invalid'], [class*='alert']"
+                    )
+                    if await erros.count() > 0:
+                        texto = (await erros.first.inner_text()).lower()
+                        logger.info("Alerta apos modal fechar: '%s'", texto[:120])
+                        if any(x in texto for x in _ERRO_KEYWORDS):
+                            return "reprovado"
+                except Exception:
+                    pass
+                return "reprovado"
+
             try:
                 # Seletores amplos: cobre Bootstrap, SweetAlert2, Vuetify, Notyf, etc.
                 erros = page.locator(
@@ -385,7 +419,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
                     texto = (await erros.first.inner_text()).lower()
                     if any(x in texto for x in _ERRO_KEYWORDS):
                         return "reprovado"
-                    # Se há algum alerta visível mas sem keyword conhecida, loga para debug
                     if texto.strip():
                         logger.info("Alerta detectado (sem keyword): '%s'", texto[:120])
             except Exception:
@@ -393,7 +426,12 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
 
             await asyncio.sleep(0.5)
 
-        logger.warning("Timeout! URL apos 20s: %s", page.url)
+        # Captura texto da página para diagnóstico no timeout
+        try:
+            corpo = (await page.locator("body").inner_text())[:300].replace("\n", " ")
+            logger.warning("Timeout! URL: %s | Corpo: %s", page.url, corpo)
+        except Exception:
+            logger.warning("Timeout! URL apos 20s: %s", page.url)
         return "timeout"
     except Exception as exc:
         logger.exception("Erro em processar_cartao")
