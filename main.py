@@ -301,7 +301,11 @@ def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
         return "CVV inválido"
     return None
 
-_ERRO_KEYWORDS = ["inválida", "recusado", "erro", "não foi possível", "inválido"]
+_ERRO_KEYWORDS = [
+    "inválida", "recusado", "erro", "não foi possível", "inválido",
+    "declined", "invalid", "refused", "failed", "falhou",
+    "cartão não", "tente novamente", "não autorizado", "negado",
+]
 
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
     _TIMEOUT = 15000  # ms por ação individual
@@ -352,25 +356,44 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:botao_registrar"
 
+        url_pos_registro = page.url
+
         for _ in range(40):
             if estado.cancelado:
                 return "cancelado"
+
+            # Se a página navegou após o registro, analisa a nova URL
+            url_atual = page.url
+            if url_atual != url_pos_registro:
+                if "sucesso" in url_atual.lower() or "confirmacao" in url_atual.lower():
+                    return "aprovado"
+                logger.info("Pagina navegou apos registro: %s", url_atual)
 
             botoes_atual = await page.get_by_role("button", name="Remover").count()
             if botoes_atual > botoes_antes:
                 return "aprovado"
 
             try:
-                erros = page.locator(".alert, .toast, .notification, [role='alert']")
+                # Seletores amplos: cobre Bootstrap, SweetAlert2, Vuetify, Notyf, etc.
+                erros = page.locator(
+                    ".alert, .toast, .notification, [role='alert'], "
+                    ".swal2-popup, .noty_body, .v-snackbar__content, "
+                    ".notyf__message, [class*='error'], [class*='danger'], "
+                    "[class*='invalid'], [class*='alert']"
+                )
                 if await erros.count() > 0:
                     texto = (await erros.first.inner_text()).lower()
                     if any(x in texto for x in _ERRO_KEYWORDS):
                         return "reprovado"
+                    # Se há algum alerta visível mas sem keyword conhecida, loga para debug
+                    if texto.strip():
+                        logger.info("Alerta detectado (sem keyword): '%s'", texto[:120])
             except Exception:
                 pass
 
             await asyncio.sleep(0.5)
 
+        logger.warning("Timeout! URL apos 20s: %s", page.url)
         return "timeout"
     except Exception as exc:
         logger.exception("Erro em processar_cartao")
