@@ -165,27 +165,23 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-3">
+        <div class="flex flex-col gap-2">
           <button onclick="iniciarTeste()" id="btn-iniciar"
-                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98]">
+                  class="w-full bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-3.5 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98]">
             <i class="fa-solid fa-play"></i>
             INICIAR
           </button>
           <button onclick="pararTeste()" id="btn-parar"
-                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden">
+                  class="w-full bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-3.5 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden">
             <i class="fa-solid fa-stop"></i>
             INTERROMPER
           </button>
         </div>
 
-        <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
-          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
-            <i class="fa-solid fa-layer-group text-blue-500"></i>
-            Instâncias Paralelas
-          </h2>
-          <div class="grid grid-cols-3 gap-2.5" id="canais-buttons"></div>
+        <div class="bg-zinc-900 rounded-xl px-3 py-2.5 border border-zinc-800">
+          <p class="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold mb-2">Instâncias</p>
           <input type="hidden" id="canais" value="4">
-          <p class="text-xs text-zinc-500 mt-3 text-center">Quantidade de canais simultâneos</p>
+          <div class="flex gap-1.5 w-full" id="canais-buttons"></div>
         </div>
 
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
@@ -344,15 +340,12 @@
       const selected = parseInt(document.getElementById('canais').value);
       for (let i = 1; i <= 6; i++) {
         const btn = document.createElement('button');
-        btn.className = `rounded-xl py-3.5 text-center transition-all active:scale-95 ${
+        btn.className = `flex-1 rounded-lg py-1.5 text-center text-sm font-bold transition-all active:scale-95 ${
           i === selected
-            ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/40 glow-blue'
-            : 'bg-zinc-800 active:bg-zinc-700 text-zinc-300 hover:bg-zinc-700'
+            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/30'
+            : 'bg-zinc-800 active:bg-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
         }`;
-        btn.innerHTML = `
-          <div class="text-2xl font-bold leading-none">${i}</div>
-          <div class="text-[11px] mt-1 opacity-70">canais</div>
-        `;
+        btn.textContent = i;
         btn.onclick = () => {
           if (testeIniciado) {
             showToast('Não é possível alterar canais durante o teste!', 'warning');
