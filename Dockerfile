@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Dependências de sistema para o Chromium
+# Dependências de sistema para o Chromium (Debian Trixie compatível)
 RUN apt-get update && apt-get install -y \
     wget gnupg ca-certificates curl \
     fonts-liberation fonts-unifont \
@@ -15,9 +15,10 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 COPY requirements.txt .
 
-# Instala pacotes Python + Chromium com todas as deps em um único passo
+# Instala pacotes Python e depois o Chromium SEM --with-deps
+# (deps já instaladas manualmente acima, evita erro com ttf-unifont no Debian Trixie)
 RUN pip install --no-cache-dir -r requirements.txt \
-    && playwright install --with-deps chromium
+    && playwright install chromium
 
 COPY . .
 EXPOSE 8000
