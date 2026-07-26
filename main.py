@@ -304,21 +304,53 @@ def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
 _ERRO_KEYWORDS = ["inválida", "recusado", "erro", "não foi possível", "inválido"]
 
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
+    _TIMEOUT = 15000  # ms por ação individual
+
     try:
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(random.uniform(0.4, 1.0))
 
-        await page.get_by_role("button", name="Adicionar Cartão de Crédito").click(force=True)
+        # Detecta sessão expirada (redirecionado para login)
+        url_atual = page.url
+        if "login" in url_atual.lower() or URL_MEUS_CARTOES not in url_atual:
+            logger.warning("Sessão expirada! URL atual: %s", url_atual)
+            return "erro:sessao_expirada"
+
+        # Botão de adicionar cartão
+        btn_adicionar = page.get_by_role("button", name="Adicionar Cartão de Crédito")
+        if not await btn_adicionar.count():
+            return "erro:botao_adicionar_nao_encontrado"
+        await btn_adicionar.click(force=True, timeout=_TIMEOUT)
         await asyncio.sleep(0.5)
 
-        await page.get_by_role("textbox", name="Número do cartão").fill(numero)
-        await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO)
-        await page.get_by_label("Mês").select_option(mes)
-        await page.get_by_label("Ano").select_option(ano)
-        await page.get_by_role("textbox", name="CVV").fill(cvv)
+        # Preenchimento do formulário
+        try:
+            await page.get_by_role("textbox", name="Número do cartão").fill(numero, timeout=_TIMEOUT)
+            await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO, timeout=_TIMEOUT)
+        except Exception:
+            return "erro:campos_numero_nome"
+
+        try:
+            await page.get_by_label("Mês").select_option(mes, timeout=_TIMEOUT)
+        except Exception:
+            return "erro:select_mes"
+
+        try:
+            await page.get_by_label("Ano").select_option(ano, timeout=_TIMEOUT)
+        except Exception:
+            return "erro:select_ano"
+
+        try:
+            await page.get_by_role("textbox", name="CVV").fill(cvv, timeout=_TIMEOUT)
+        except Exception:
+            return "erro:campo_cvv"
 
         botoes_antes = await page.get_by_role("button", name="Remover").count()
-        await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True)
+
+        try:
+            await page.get_by_role("button", name="Registrar Cartão de Crédito").click(force=True, timeout=_TIMEOUT)
+        except Exception:
+            return "erro:botao_registrar"
 
         for _ in range(40):
             if estado.cancelado:
