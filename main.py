@@ -340,9 +340,9 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             await asyncio.sleep(0.5)
 
         return "timeout"
-    except Exception:
+    except Exception as exc:
         logger.exception("Erro em processar_cartao")
-        return "erro"
+        return f"erro:{type(exc).__name__}"
 
 async def _criar_contexto_worker(browser):
     """Cria um novo contexto e página para um worker."""
@@ -434,7 +434,8 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     elif resultado == "cancelado":
                         log(app, f"[Canal {id_worker}][{indice}] ⏹️ Cancelado")
                     else:
-                        log(app, f"[Canal {id_worker}][{indice}] ❌ Erro")
+                        tipo_exc = resultado.split(":", 1)[1] if ":" in resultado else resultado
+                        log(app, f"[Canal {id_worker}][{indice}] ❌ Erro: {tipo_exc}")
                     await broadcast(app, "reprovado", {"cartao": linha})
                     await inc_estado("tarefas_concluidas", 1)
 
