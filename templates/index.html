@@ -109,18 +109,6 @@
           </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button onclick="iniciarTeste()" id="btn-iniciar"
-                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98]">
-            <i class="fa-solid fa-play"></i>
-            INICIAR
-          </button>
-          <button onclick="pararTeste()" id="btn-parar"
-                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden">
-            <i class="fa-solid fa-stop"></i>
-            INTERROMPER
-          </button>
-        </div>
 
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
           <div class="flex justify-between items-center mb-3">
@@ -175,6 +163,19 @@
             <div id="rejected-count" class="text-4xl font-black mt-1 mb-0.5 drop-shadow-lg">0</div>
             <p class="text-rose-100/70 text-[11px] font-medium">cartões</p>
           </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <button onclick="iniciarTeste()" id="btn-iniciar"
+                  class="bg-green-600 active:bg-green-700 hover:bg-green-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-green-500/20 active:scale-[0.98]">
+            <i class="fa-solid fa-play"></i>
+            INICIAR
+          </button>
+          <button onclick="pararTeste()" id="btn-parar"
+                  class="bg-red-600 active:bg-red-700 hover:bg-red-500 transition-all text-white font-semibold py-4 rounded-2xl text-base flex items-center justify-center gap-2.5 shadow-lg shadow-red-500/20 active:scale-[0.98] hidden">
+            <i class="fa-solid fa-stop"></i>
+            INTERROMPER
+          </button>
         </div>
 
         <div class="bg-zinc-900 rounded-2xl p-5 border border-zinc-800">
