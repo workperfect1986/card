@@ -258,9 +258,9 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
 
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
-        await page.get_by_role("textbox", name="E-mail ou CPF").fill(EMAIL)
-        await page.get_by_role("textbox", name="Senha").fill(SENHA)
-        await page.get_by_role("button", name="Entrar").click()
+        await page.get_by_role("textbox", name="672aaef2d67e0ed317e8eea1f049339f").fill(EMAIL)
+        await page.get_by_role("textbox", name="664d478300232207e85e5d04b96e1918").fill(SENHA)
+        await page.get_by_role("button", name="6babcc7b419ee9c279e71209054bdce5").click()
         await page.wait_for_selector("text=Meus Cartões", timeout=30000)
 
         await limpar_cartoes(page, app)
