@@ -252,34 +252,40 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
             return False
 
         log(app, "[Auth] Login completo (Modo Full)...")
-        # Altere para headless=False se quiser acompanhar visualmente a automação
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
         context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
         page = await context.new_page()
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
 
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60000)
-        
-        # Seletores robustos para garantir o preenchimento correto dos inputs
-        try:
-            email_input = page.locator("input[type='email'], input[name*='email'], input[name*='user'], input[placeholder*='E-mail'], input[placeholder*='CPF']").first
-            await email_input.fill(EMAIL, timeout=10000)
-        except Exception:
-            logger.exception("Não foi possível preencher o campo de e-mail/CPF")
-            raise
+        await asyncio.sleep(3)
+
+        # Varredura inteligente de frames e inputs idêntica à do teste bem-sucedido
+        alvo_page = page
+        for frame in page.frames:
+            inputs = await frame.locator("input").all()
+            if len(inputs) > 0:
+                for inp in inputs:
+                    placeholder = await inp.get_attribute("placeholder")
+                    if placeholder and "E-mail" in placeholder:
+                        alvo_page = frame
+                        break
 
         try:
-            senha_input = page.locator("input[type='password'], input[name*='senha'], input[name*='pass']").first
-            await senha_input.fill(SENHA, timeout=10000)
-        except Exception:
-            logger.exception("Não foi possível preencher o campo de senha")
-            raise
+            email_input = alvo_page.locator("input[type='email'], input[type='text'], input:not([type])").first
+            await email_input.click()
+            await email_input.fill(EMAIL)
 
-        try:
-            btn_entrar = page.locator("button:has-text('Entrar'), button[type='submit'], input[type='submit']").first
-            await btn_entrar.click(timeout=10000)
+            senha_input = alvo_page.locator("input[type='password']").first
+            await senha_input.click()
+            await senha_input.fill(SENHA)
+
+            btn = alvo_page.locator("button, input[type='submit']").filter(has_text="ENTRAR").first
+            if not await btn.count():
+                btn = alvo_page.locator("button[type='submit']").first
+            await btn.click()
         except Exception:
-            logger.exception("Não foi possível clicar no botão Entrar")
+            logger.exception("Não foi possível preencher ou clicar no login")
             raise
 
         try:
