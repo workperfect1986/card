@@ -16,7 +16,7 @@ import uvicorn
 
 # ================= CONFIG =================
 PORT = int(os.getenv("PORT", "8000"))
-URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login")
+URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login/app")
 URL_MEUS_CARTOES = os.getenv("UNIMAR_URL_CARTOES", "https://digital.unimar.br/areadoaluno/conta/meuscartoes")
 EMAIL = os.getenv("UNIMAR_EMAIL", "")
 SENHA = os.getenv("UNIMAR_SENHA", "")
