@@ -106,10 +106,8 @@ async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
     mensagem = {"type": tipo, **data}
     async with estado.lock:
         clients = list(estado.clients)
-    
-    if not clients:
-        return
-
+        if not clients:
+            return
     tarefas = [client.send_json(mensagem) for client in clients]
     resultados = await asyncio.gather(*tarefas, return_exceptions=True)
     mortos = [c for c, r in zip(clients, resultados) if isinstance(r, Exception)]
@@ -238,23 +236,19 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
         if await sessao_valida(playwright):
             log(app, "[Auth] Sessão reutilizada (Modo Fast)")
             return True
-
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
             return False
-
         log(app, "[Auth] Login completo (Modo Full)...")
         browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
         context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
         page = await context.new_page()
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
-        
         await page.goto(URL_LOGIN, wait_until="networkidle", timeout=60000)
         await asyncio.sleep(2)
 
         alvo_page = page
         email_input = None
-
         for _ in range(10):
             for frame in [page] + list(page.frames):
                 try:
@@ -273,8 +267,7 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
             await asyncio.sleep(1)
 
         if not email_input:
-            await page.screenshot(path="erro_login_email.png", full_page=True)
-            log(app, "[ERRO] Campo de e-mail não encontrado. Print salvo.")
+            log(app, "[ERRO] Campo de e-mail não encontrado.")
             await context.close()
             await browser.close()
             return False
@@ -303,7 +296,6 @@ async def login_mestre(playwright, app: FastAPI) -> bool:
         await browser.close()
         log(app, "[Auth] Login concluído!")
         return True
-
     except Exception:
         logger.exception("[ERRO] Login falhou")
         return False
@@ -334,7 +326,9 @@ def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
     return None
 
 _ERRO_KEYWORDS = [
-    "inválida", "recusado", "erro", "não foi possível", "inválido", "declined", "invalid", "refused", "failed", "falhou", "cartão não", "tente novamente", "não autorizado", "negado",
+    "inválida", "recusado", "erro", "não foi possível", "inválido",
+    "declined", "invalid", "refused", "failed", "falhou",
+    "cartão não", "tente novamente", "não autorizado", "negado",
 ]
 
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
@@ -342,7 +336,7 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
     try:
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(random.uniform(0.4, 1.0))
-        
+
         url_atual = page.url
         if "login" in url_atual.lower() or URL_MEUS_CARTOES not in url_atual:
             logger.warning("Sessão expirada! URL atual: %s", url_atual)
@@ -351,8 +345,8 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         btn_adicionar = page.locator("button:has-text('Adicionar Cartão'), button:has-text('Novo Cartão'), [role='button']:has-text('Cartão')").first
         if not await btn_adicionar.count():
             btn_adicionar = page.get_by_role("button", name="Adicionar Cartão de Crédito")
-            if not await btn_adicionar.count():
-                return "erro:botao_adicionar_nao_encontrado"
+        if not await btn_adicionar.count():
+            return "erro:botao_adicionar_nao_encontrado"
 
         await btn_adicionar.click(force=True, timeout=_TIMEOUT)
         await asyncio.sleep(0.8)
@@ -403,17 +397,26 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             return "erro:campo_cvv"
 
         botoes_antes = await page.get_by_role("button", name="Remover").count()
-        
+
         try:
-            btn_registrar = page.locator("button[type='submit'], button:has-text('Registrar'), button:has-text('Salvar'), button:has-text('Cadastrar')").first
+            btn_registrar = page.locator(
+                "button:has-text('Registrar Cartão de Crédito'), "
+                "button:has-text('Registrar'), "
+                "button:has-text('Salvar'), "
+                "button:has-text('Cadastrar')"
+            ).first
+
+            if not await btn_registrar.count():
+                btn_registrar = page.get_by_role("button", name="Registrar Cartão de Crédito")
+
             await btn_registrar.scroll_into_view_if_needed(timeout=_TIMEOUT)
             await btn_registrar.click(timeout=_TIMEOUT)
         except Exception:
             return "erro:botao_registrar"
 
         await asyncio.sleep(2.0)
-
         botoes_apos = await page.get_by_role("button", name="Remover").count()
+
         if botoes_apos > botoes_antes:
             return "aprovado"
 
@@ -427,7 +430,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             pass
 
         return "reprovado"
-
     except Exception as exc:
         logger.exception("Erro em processar_cartao")
         return f"erro:{type(exc).__name__}"
@@ -451,6 +453,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
         await asyncio.sleep(id_worker * 1.2)
         log(app, f"[Canal {id_worker}] Iniciando")
         context, page = await _criar_contexto_worker(browser)
+
         while estado.rodando and not estado.cancelado:
             try:
                 indice, linha, tentativa = await asyncio.wait_for(fila.get(), timeout=2.0)
@@ -458,6 +461,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                 if fila.empty():
                     break
                 continue
+
             try:
                 partes = [x.strip() for x in linha.split("|")]
                 if len(partes) != 4:
@@ -465,6 +469,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await broadcast(app, "reprovado", {"cartao": linha})
                     await inc_estado("tarefas_concluidas", 1)
                     continue
+
                 numero, mes, ano, cvv = partes
                 erro_validacao = validar_cartao(numero, mes, ano, cvv)
                 if erro_validacao:
@@ -474,6 +479,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     continue
 
                 log(app, f"[Canal {id_worker}][{indice}] ****{numero[-4:]}")
+
                 try:
                     resultado = await processar_cartao(page, numero, mes, ano, cvv)
                 except Exception:
@@ -521,6 +527,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     "velocidade": velocidade,
                     "tempo": elapsed,
                 })
+
             finally:
                 fila.task_done()
     except Exception:
@@ -544,10 +551,12 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         if not NOME_FIXO:
             log(app, "[ERRO] UNIMAR_NOME não configurado!")
             return
+
         linhas = list(dict.fromkeys([l.strip() for l in texto_cartoes.splitlines() if l.strip()]))
         if not linhas:
             log(app, "[ERRO] Nenhum cartão fornecido")
             return
+
         await set_estado(
             total_cartoes=len(linhas),
             tarefas_concluidas=0,
@@ -555,8 +564,10 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
             cancelado=False,
             inicio_timestamp=time.time(),
         )
+
         num_canais = min(max(num_canais, 1), MAX_CANAIS, len(linhas))
         log(app, f"[Sistema] {num_canais} canais | {len(linhas)} cartões")
+
         fila = asyncio.Queue()
         for idx, linha in enumerate(linhas, 1):
             await fila.put((idx, linha, 1))
@@ -565,11 +576,13 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
             if not await login_mestre(pw, app):
                 log(app, "[ERRO] Falha na autenticação")
                 return
+
             browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
             app.state.browser = browser
             try:
                 tasks = [asyncio.create_task(worker(i, browser, fila, app)) for i in range(1, num_canais + 1)]
                 await asyncio.gather(*tasks, return_exceptions=True)
+
                 if estado.aprovados > 0 and not estado.cancelado:
                     log(app, "[Sistema] Faxina final...")
                     try:
