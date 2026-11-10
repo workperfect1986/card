@@ -287,8 +287,7 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
             for frame in [page] + list(page.frames):
                 try:
                     el = frame.locator(
-                        "input[type='email'], input[name*='email'], "
-                        "input[id*='email'], input[placeholder*='E-mail'], "
+                        "input[type='login'], input[name*='login'], "
                         "input[type='text']"
                     ).first
                     await el.wait_for(state="visible", timeout=15000)
@@ -306,7 +305,7 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
             # ✅ CORRIGIDO: fill() instantâneo em vez de type() com delay
             await email_input.fill(EMAIL)
 
-            senha_input = alvo_page.locator("input[type='password']").first
+            senha_input = alvo_page.locator("input[type='passwd']").first
             await senha_input.wait_for(state="visible", timeout=10000)
             await senha_input.fill(SENHA)
 
