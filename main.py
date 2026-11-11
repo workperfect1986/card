@@ -257,7 +257,7 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         logger.exception("[Faxina] Erro")
 
 async def login_mestre(playwright, app: FastAPI, browser) -> bool:
-    """Realiza o processo de autenticação na plataforma da Unimar, utilizando seletores precisos para login e senha."""
+    """Realiza o processo de autenticação na plataforma da Unimar com seletores e navegação otimizada."""
     try:
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
@@ -285,9 +285,9 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
 
             log(app, "[Auth] Login completo (Modo Full)...")
             log(app, "Acessando a página de login...")
-            await page.goto(URL_LOGIN, wait_until="networkidle", timeout=30000)
+            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
 
-            # Seletores mapeados com fallbacks para garantir a interação correta
+            # Seletores mapeados com fallbacks
             email_input = page.locator('input[type="email"], input[name="email"], input[name="login"], input[type="text"]').first
             password_input = page.locator('input[type="password"]').first
             submit_button = page.locator('button[type="submit"], input[type="submit"], button:has-text("Entrar"), button:has-text("Acessar")').first
@@ -302,12 +302,14 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
             log(app, "Clicando no botão de entrar...")
             await submit_button.click()
 
-            # Aguarda o carregamento pós-login
-            await page.wait_for_load_state("networkidle")
-            
+            # Aguarda redirecionamento de forma ágil
+            log(app, "Aguardando redirecionamento pós-login...")
             try:
-                await page.wait_for_url("**/areadoaluno/**", timeout=30000)
+                await page.wait_for_url("**/areadoaluno/**", timeout=15000)
             except Exception:
+                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+            if "login" in page.url.lower():
                 await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
 
             await context.storage_state(path=str(SESSAO_PATH))
