@@ -284,41 +284,27 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
                 log(app, "[Auth] Sessão expirada, fazendo login completo...")
 
             log(app, "[Auth] Login completo (Modo Full)...")
-            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
+            log(app, "Acessando a página de login...")
+            await page.goto(URL_LOGIN, wait_until="networkidle", timeout=30000)
 
-            # Localização precisa do campo de e-mail/login
-            email_input = None
-            alvo_page = page
-            for frame in [page] + list(page.frames):
-                try:
-                    el = frame.locator("input#login, input[name='login'], input[autocomplete='username']").first
-                    await el.wait_for(state="visible", timeout=15000)
-                    email_input = el
-                    alvo_page = frame
-                    break
-                except Exception:
-                    continue
+            # Seletores mapeados com fallbacks para garantir a interação correta
+            email_input = page.locator('input[type="email"], input[name="email"], input[name="login"], input[type="text"]').first
+            password_input = page.locator('input[type="password"]').first
+            submit_button = page.locator('button[type="submit"], input[type="submit"], button:has-text("Entrar"), button:has-text("Acessar")').first
 
-            if not email_input:
-                log(app, "[ERRO] Campo de e-mail/login não encontrado.")
-                await context.close()
-                return False
-
-            await email_input.fill("")
+            log(app, "Preenchendo e-mail e senha...")
+            await email_input.wait_for(state="visible", timeout=15000)
             await email_input.fill(EMAIL)
+            
+            await password_input.wait_for(state="visible", timeout=10000)
+            await password_input.fill(SENHA)
 
-            # Localização precisa do campo de senha
-            senha_input = alvo_page.locator("input#passwd, input[name='passwd'], input[autocomplete='current-password']").first
-            await senha_input.wait_for(state="visible", timeout=10000)
-            await senha_input.fill("")
-            await senha_input.fill(SENHA)
+            log(app, "Clicando no botão de entrar...")
+            await submit_button.click()
 
-            btn = alvo_page.locator(
-                "button[type='submit'], input[type='submit'], "
-                "button:has-text('ENTRAR'), button:has-text('Entrar')"
-            ).first
-            await btn.click()
-
+            # Aguarda o carregamento pós-login
+            await page.wait_for_load_state("networkidle")
+            
             try:
                 await page.wait_for_url("**/areadoaluno/**", timeout=30000)
             except Exception:
