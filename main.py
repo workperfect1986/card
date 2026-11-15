@@ -257,7 +257,7 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         logger.exception("[Faxina] Erro")
 
 async def login_mestre(playwright, app: FastAPI, browser) -> bool:
-    """Realiza o processo de autenticação na plataforma da Unimar com seletores e navegação otimizada."""
+    """Realiza o processo de autenticação na plataforma da Unimar com seletores baseados no script de cURL."""
     try:
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
@@ -285,24 +285,42 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
 
             log(app, "[Auth] Login completo (Modo Full)...")
             log(app, "Acessando a página de login...")
+            
+            # Navega para a página de login solicitada
             await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
 
-            # Seletores mapeados com fallbacks
-            email_input = page.locator('input[type="email"], input[name="email"], input[name="login"], input[type="text"]').first
-            password_input = page.locator('input[type="password"]').first
-            submit_button = page.locator('button[type="submit"], input[type="submit"], button:has-text("Entrar"), button:has-text("Acessar")').first
+            # Seletores mapeados com base no formulário da Unimar (input de login/email, passwd e botão de acesso)
+            email_input = page.locator('input[name="login"], input[type="email"], input[type="text"]').first
+            password_input = page.locator('input[name="passwd"], input[type="password"]').first
+            
+            # Checkbox 'lembrar' (opcional, equivalente a lembrar=1)
+            lembrar_checkbox = page.locator('input[name="lembrar"], input[type="checkbox"]').first
+            
+            # Botão de acessar (equivalente ao btnAcessar do cURL)
+            submit_button = page.locator('button[name="btnAcessar"], input[name="btnAcessar"], button[type="submit"], input[type="submit"], button:has-text("Acessar"), button:has-text("Entrar")').first
 
-            log(app, "Preenchendo e-mail e senha...")
+            log(app, "Preenchendo e-mail e senha a partir do .env...")
             await email_input.wait_for(state="visible", timeout=15000)
             await email_input.fill(EMAIL)
             
             await password_input.wait_for(state="visible", timeout=10000)
             await password_input.fill(SENHA)
 
-            log(app, "Clicando no botão de entrar...")
-            await submit_button.click()
+            # Marca o checkbox "lembrar" caso ele exista na tela
+            if await lembrar_checkbox.count() > 0:
+                try:
+                    await lembrar_checkbox.set_checked(True, timeout=3000)
+                except Exception:
+                    pass
 
-            # Aguarda redirecionamento de forma ágil
+            log(app, "Enviando formulário de login...")
+            if await submit_button.count() > 0:
+                await submit_button.click()
+            else:
+                # Fallback caso o botão não seja encontrado por nome exato
+                await password_input.press("Enter")
+
+            # Aguarda o redirecionamento pós-login para a área do aluno
             log(app, "Aguardando redirecionamento pós-login...")
             try:
                 await page.wait_for_url("**/areadoaluno/**", timeout=15000)
@@ -315,7 +333,7 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
             await context.storage_state(path=str(SESSAO_PATH))
             await limpar_cartoes(page, app)
             await context.close()
-            log(app, "[Auth] Login concluído!")
+            log(app, "[Auth] Login concluído com sucesso!")
             return True
         except Exception:
             await context.close()
