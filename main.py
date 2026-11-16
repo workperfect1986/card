@@ -257,7 +257,7 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         logger.exception("[Faxina] Erro")
 
 async def login_mestre(playwright, app: FastAPI, browser) -> bool:
-    """Realiza o processo de autenticação na plataforma da Unimar com seletores baseados no script de cURL."""
+    """Realiza o processo de autenticação na plataforma da Unimar preenchendo diretamente via DOM."""
     try:
         if not EMAIL or not SENHA:
             log(app, "[ERRO] Email/senha não configurados!")
@@ -283,49 +283,74 @@ async def login_mestre(playwright, app: FastAPI, browser) -> bool:
                     return True
                 log(app, "[Auth] Sessão expirada, fazendo login completo...")
 
-            log(app, "[Auth] Login completo (Modo Full)...")
+            log(app, "[Auth] Login completo (Modo Full Otimizado)...")
             log(app, "Acessando a página de login...")
             
-            # Navega para a página de login solicitada
-            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=30000)
+            # Utiliza 'domcontentloaded' para não travar esperando scripts/complementos pesados
+            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=15000)
 
-            # Seletores mapeados com base no formulário da Unimar (input de login/email, passwd e botão de acesso)
-            email_input = page.locator('input[name="login"], input[type="email"], input[type="text"]').first
-            password_input = page.locator('input[name="passwd"], input[type="password"]').first
+            log(app, "Preenchendo credenciais diretamente via DOM...")
             
-            # Checkbox 'lembrar' (opcional, equivalente a lembrar=1)
-            lembrar_checkbox = page.locator('input[name="lembrar"], input[type="checkbox"]').first
+            # Injeção direta em HTML puro / JS para evitar falhas de foco ou lentidão de eventos do framework
+            preenchido = await page.evaluate(
+                """([email, senha]) => {
+                    const emailInput = document.querySelector('input[name="login"], input[type="email"], input[type="text"]');
+                    const passInput = document.querySelector('input[name="passwd"], input[type="password"]');
+                    const checkInput = document.querySelector('input[name="lembrar"], input[type="checkbox"]');
+                    
+                    if (!emailInput || !passInput) return false;
+                    
+                    emailInput.value = email;
+                    emailInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    emailInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    
+                    passInput.value = senha;
+                    passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    passInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    
+                    if (checkInput) {
+                        checkInput.checked = true;
+                        checkInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                    return true;
+                }""",
+                [EMAIL, SENHA]
+            )
+
+            if not preenchido:
+                log(app, "[ERRO] Campos de login não encontrados no DOM.")
+                await context.close()
+                return False
+
+            log(app, "Enviando formulário...")
             
-            # Botão de acessar (equivalente ao btnAcessar do cURL)
-            submit_button = page.locator('button[name="btnAcessar"], input[name="btnAcessar"], button[type="submit"], input[type="submit"], button:has-text("Acessar"), button:has-text("Entrar")').first
+            # Tenta clicar no botão de submissão ou força o submit do formulário via JS
+            submetido = await page.evaluate(
+                """() => {
+                    const btn = document.querySelector('button[name="btnAcessar"], input[name="btnAcessar"], button[type="submit"], input[type="submit"]');
+                    if (btn) {
+                        btn.click();
+                        return true;
+                    }
+                    const form = document.querySelector('form');
+                    if (form) {
+                        form.submit();
+                        return true;
+                    }
+                    return false;
+                }"""
+            )
 
-            log(app, "Preenchendo e-mail e senha a partir do .env...")
-            await email_input.wait_for(state="visible", timeout=15000)
-            await email_input.fill(EMAIL)
-            
-            await password_input.wait_for(state="visible", timeout=10000)
-            await password_input.fill(SENHA)
+            if not submetido:
+                # Fallback pressionando Enter no campo de senha
+                await page.keyboard.press("Enter")
 
-            # Marca o checkbox "lembrar" caso ele exista na tela
-            if await lembrar_checkbox.count() > 0:
-                try:
-                    await lembrar_checkbox.set_checked(True, timeout=3000)
-                except Exception:
-                    pass
-
-            log(app, "Enviando formulário de login...")
-            if await submit_button.count() > 0:
-                await submit_button.click()
-            else:
-                # Fallback caso o botão não seja encontrado por nome exato
-                await password_input.press("Enter")
-
-            # Aguarda o redirecionamento pós-login para a área do aluno
+            # Aguarda o redirecionamento pós-login com timeout reduzido e seguro
             log(app, "Aguardando redirecionamento pós-login...")
             try:
-                await page.wait_for_url("**/areadoaluno/**", timeout=15000)
+                await page.wait_for_url("**/areadoaluno/**", timeout=12000)
             except Exception:
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                await page.wait_for_load_state("domcontentloaded", timeout=8000)
 
             if "login" in page.url.lower():
                 await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
