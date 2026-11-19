@@ -1,30 +1,36 @@
 import os
+import sys
 import time
 import asyncio
 import subprocess
-import random
 import datetime
 import logging
 from pathlib import Path
 from typing import Set, Optional
 from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, field_validator
 from playwright.async_api import async_playwright
 import uvicorn
 
+from auth_unimar import (
+    garantir_autenticacao,
+    SESSAO_PATH,
+    URL_MEUS_CARTOES,
+    USER_AGENT,
+)
+
+load_dotenv()
+
 # ================= CONFIGURAÇÕES GLOBAIS =================
 PORT = int(os.getenv("PORT", "8000"))
-URL_LOGIN = os.getenv("UNIMAR_URL_LOGIN", "https://digital.unimar.br/login/app")
-URL_MEUS_CARTOES = os.getenv("UNIMAR_URL_CARTOES", "https://digital.unimar.br/areadoaluno/conta/meuscartoes")
-EMAIL = os.getenv("UNIMAR_EMAIL", "")
-SENHA = os.getenv("UNIMAR_SENHA", "")
 NOME_FIXO = os.getenv("UNIMAR_NOME", "")
 MAX_TENTATIVAS = int(os.getenv("UNIMAR_MAX_TENTATIVAS", "3"))
 MAX_CANAIS = int(os.getenv("UNIMAR_MAX_CANAIS", "6"))
 VIEWPORT = {"width": 1280, "height": 720}
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 BROWSER_ARGS = [
     "--no-sandbox",
     "--disable-dev-shm-usage",
@@ -34,8 +40,6 @@ BROWSER_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-setuid-sandbox",
 ]
-SESSAO_PATH = Path("sessao_unimar.json")
-SESSAO_MAX_AGE = 86400
 
 # ================= CONFIGURAÇÃO DE LOGS =================
 logging.basicConfig(
@@ -45,31 +49,52 @@ logging.basicConfig(
 )
 logger = logging.getLogger("unimar")
 
+
 # ================= VERIFICAÇÃO DO PLAYWRIGHT =================
 def garantir_playwright() -> bool:
     """
-    Verifica se os binários do Chromium do Playwright estão instalados no ambiente.
-    Caso contrário, tenta realizar a instalação via subprocesso.
+    Verifica se os binários do Chromium do Playwright estão instalados no ambiente
+    (compatível com Windows, Linux e Docker).
     """
-    ms_playwright = Path("/root/.cache/ms-playwright")
-    if ms_playwright.exists():
-        for pasta in ms_playwright.iterdir():
-            if pasta.is_dir() and pasta.name.startswith("chromium-"):
-                chrome = pasta / "chrome-linux" / "chrome"
-                if chrome.exists():
-                    logger.info("Chromium encontrado: %s", chrome)
-                    return True
+    caminhos_possiveis = []
+
+    env_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
+    if env_path and env_path != "0":
+        caminhos_possiveis.append(Path(env_path))
+
+    if sys.platform == "win32":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            caminhos_possiveis.append(Path(local_app_data) / "ms-playwright")
+    else:
+        caminhos_possiveis.append(Path("/root/.cache/ms-playwright"))
+        caminhos_possiveis.append(Path.home() / ".cache" / "ms-playwright")
+
+    for base in caminhos_possiveis:
+        if base.exists():
+            for pasta in base.iterdir():
+                if pasta.is_dir() and pasta.name.startswith("chromium-"):
+                    exe_linux = pasta / "chrome-linux" / "chrome"
+                    exe_win = pasta / "chrome-win" / "chrome.exe"
+                    exe_win64 = pasta / "chrome-win64" / "chrome.exe"
+                    for exe in (exe_linux, exe_win, exe_win64):
+                        if exe.exists():
+                            logger.info("Chromium encontrado: %s", exe)
+                            return True
+
     logger.warning("Chromium não encontrado. Instalando...")
     try:
-        subprocess.run(["playwright", "install", "chromium"], check=True, timeout=120)
+        subprocess.run(["playwright", "install", "chromium"], check=True, timeout=180)
         return True
     except Exception:
         logger.exception("Erro ao instalar Chromium")
         return False
 
+
 # ================= GERENCIAMENTO DE ESTADO =================
 class Estado:
     """Controla o estado global compartilhado da aplicação de forma thread-safe."""
+
     def __init__(self):
         self.lock = asyncio.Lock()
         self.rodando = False
@@ -82,7 +107,9 @@ class Estado:
         self.canais_ativos = 0
         self.task: Optional[asyncio.Task] = None
 
+
 estado = Estado()
+
 
 # ================= FUNÇÕES AUXILIARES DE ESTADO E MÉTRICAS =================
 async def set_estado(**kwargs) -> None:
@@ -90,6 +117,7 @@ async def set_estado(**kwargs) -> None:
     async with estado.lock:
         for k, v in kwargs.items():
             setattr(estado, k, v)
+
 
 async def inc_estado(campo: str, valor: int = 1) -> int:
     """Incrementa um contador numérico no estado global de forma segura."""
@@ -99,6 +127,7 @@ async def inc_estado(campo: str, valor: int = 1) -> int:
         setattr(estado, campo, novo)
         return novo
 
+
 async def calc_velocidade() -> tuple[float, int]:
     """Calcula a velocidade de processamento (cartões por minuto) e o tempo decorrido."""
     async with estado.lock:
@@ -107,6 +136,7 @@ async def calc_velocidade() -> tuple[float, int]:
         elapsed = time.time() - inicio if inicio else 0
         velocidade = concluidas / (elapsed / 60) if elapsed > 0 else 0
         return round(velocidade, 1), round(elapsed)
+
 
 async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
     """Envia mensagens em tempo real via WebSocket para todos os clientes conectados."""
@@ -124,7 +154,7 @@ async def broadcast(app: FastAPI, tipo: str, data: dict | None = None) -> None:
         async with estado.lock:
             for c in mortos:
                 estado.clients.discard(c)
-    logger.info("Broadcast %s enviado para %d cliente(s)", tipo, len(clients) - len(mortos))
+
 
 def _log_task_exception(task: asyncio.Task) -> None:
     """Callback para capturar exceções silenciosas em tarefas de log em segundo plano."""
@@ -133,6 +163,7 @@ def _log_task_exception(task: asyncio.Task) -> None:
     exc = task.exception()
     if exc:
         logger.error("Erro no broadcast de log: %s", exc)
+
 
 def log(app: FastAPI, msg: str) -> None:
     """Registra logs localmente e transmite via WebSocket para o painel."""
@@ -145,6 +176,7 @@ def log(app: FastAPI, msg: str) -> None:
         task.add_done_callback(_log_task_exception)
     except RuntimeError:
         pass
+
 
 # ================= SCHEMAS DE VALIDAÇÃO (PYDANTIC) =================
 class IniciarRequest(BaseModel):
@@ -159,6 +191,7 @@ class IniciarRequest(BaseModel):
             raise ValueError(f"Canais deve ser entre 1 e {MAX_CANAIS}")
         return v
 
+
 # ================= KEEPALIVE WEBSOCKET =================
 async def _ws_keepalive():
     """Envia um ping periódico a cada 30 segundos para manter as conexões WebSocket ativas."""
@@ -172,6 +205,7 @@ async def _ws_keepalive():
             except Exception:
                 async with estado.lock:
                     estado.clients.discard(client)
+
 
 # ================= CICLO DE VIDA DO APLICATIVO (LIFESPAN) =================
 @asynccontextmanager
@@ -196,31 +230,11 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+
 app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 
-# ================= FLUXOS DO PLAYWRIGHT =================
-async def sessao_valida(context) -> bool:
-    """Valida se o arquivo de sessão salvo ainda é válido abrindo a página de cartões."""
-    if not SESSAO_PATH.exists():
-        return False
-    if time.time() - SESSAO_PATH.stat().st_mtime > SESSAO_MAX_AGE:
-        return False
-    try:
-        page = await context.new_page()
-        try:
-            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
-            try:
-                await page.get_by_role("button", name="Adicionar Cartão de Crédito") \
-                    .wait_for(state="visible", timeout=8000)
-                return True
-            except Exception:
-                return False
-        finally:
-            await page.close()
-    except Exception:
-        logger.warning("Erro ao validar sessão", exc_info=True)
-        return False
 
+# ================= FLUXOS DO PLAYWRIGHT =================
 async def limpar_cartoes(page, app: FastAPI) -> None:
     """Remove cartões salvos anteriormente na conta para liberar espaço e evitar conflitos."""
     try:
@@ -228,8 +242,9 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         if URL_MEUS_CARTOES not in page.url:
             await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
         try:
-            await page.get_by_role("button", name="Remover").first \
-                .wait_for(state="visible", timeout=5000)
+            await page.get_by_role("button", name="Remover").first.wait_for(
+                state="visible", timeout=5000
+            )
         except Exception:
             log(app, "[Faxina] Nenhum cartão para remover")
             return
@@ -256,116 +271,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
     except Exception:
         logger.exception("[Faxina] Erro")
 
-async def login_mestre(playwright, app: FastAPI, browser) -> bool:
-    """Realiza o processo de autenticação na plataforma da Unimar preenchendo diretamente via DOM."""
-    try:
-        if not EMAIL or not SENHA:
-            log(app, "[ERRO] Email/senha não configurados!")
-            return False
-
-        context = await browser.new_context(viewport=VIEWPORT, user_agent=USER_AGENT)
-        page = await context.new_page()
-        page.on("dialog", lambda d: asyncio.create_task(d.accept()))
-
-        try:
-            if SESSAO_PATH.exists():
-                await context.close()
-                context = await browser.new_context(
-                    storage_state=str(SESSAO_PATH),
-                    viewport=VIEWPORT,
-                    user_agent=USER_AGENT,
-                )
-                page = await context.new_page()
-                page.on("dialog", lambda d: asyncio.create_task(d.accept()))
-                if await sessao_valida(context):
-                    log(app, "[Auth] Sessão reutilizada (Modo Fast)")
-                    await context.close()
-                    return True
-                log(app, "[Auth] Sessão expirada, fazendo login completo...")
-
-            log(app, "[Auth] Login completo (Modo Full Otimizado)...")
-            log(app, "Acessando a página de login...")
-            
-            # Utiliza 'domcontentloaded' para não travar esperando scripts/complementos pesados
-            await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=15000)
-
-            log(app, "Preenchendo credenciais diretamente via DOM...")
-            
-            # Injeção direta em HTML puro / JS para evitar falhas de foco ou lentidão de eventos do framework
-            preenchido = await page.evaluate(
-                """([email, senha]) => {
-                    const emailInput = document.querySelector('input[name="login"], input[type="email"], input[type="text"]');
-                    const passInput = document.querySelector('input[name="passwd"], input[type="password"]');
-                    const checkInput = document.querySelector('input[name="lembrar"], input[type="checkbox"]');
-                    
-                    if (!emailInput || !passInput) return false;
-                    
-                    emailInput.value = email;
-                    emailInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    emailInput.dispatchEvent(new Event('change', { bubbles: true }));
-                    
-                    passInput.value = senha;
-                    passInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    passInput.dispatchEvent(new Event('change', { bubbles: true }));
-                    
-                    if (checkInput) {
-                        checkInput.checked = true;
-                        checkInput.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                    return true;
-                }""",
-                [EMAIL, SENHA]
-            )
-
-            if not preenchido:
-                log(app, "[ERRO] Campos de login não encontrados no DOM.")
-                await context.close()
-                return False
-
-            log(app, "Enviando formulário...")
-            
-            # Tenta clicar no botão de submissão ou força o submit do formulário via JS
-            submetido = await page.evaluate(
-                """() => {
-                    const btn = document.querySelector('button[name="btnAcessar"], input[name="btnAcessar"], button[type="submit"], input[type="submit"]');
-                    if (btn) {
-                        btn.click();
-                        return true;
-                    }
-                    const form = document.querySelector('form');
-                    if (form) {
-                        form.submit();
-                        return true;
-                    }
-                    return false;
-                }"""
-            )
-
-            if not submetido:
-                # Fallback pressionando Enter no campo de senha
-                await page.keyboard.press("Enter")
-
-            # Aguarda o redirecionamento pós-login com timeout reduzido e seguro
-            log(app, "Aguardando redirecionamento pós-login...")
-            try:
-                await page.wait_for_url("**/areadoaluno/**", timeout=12000)
-            except Exception:
-                await page.wait_for_load_state("domcontentloaded", timeout=8000)
-
-            if "login" in page.url.lower():
-                await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
-
-            await context.storage_state(path=str(SESSAO_PATH))
-            await limpar_cartoes(page, app)
-            await context.close()
-            log(app, "[Auth] Login concluído com sucesso!")
-            return True
-        except Exception:
-            await context.close()
-            raise
-    except Exception:
-        logger.exception("[ERRO] Login falhou")
-        return False
 
 # ================= VALIDAÇÕES DE CARTÃO =================
 def validar_luhn(numero: str) -> bool:
@@ -382,6 +287,7 @@ def validar_luhn(numero: str) -> bool:
         checksum += d
     return checksum % 10 == 0
 
+
 def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
     """Valida estruturalmente os dados de um cartão de crédito antes de tentar o envio."""
     if not numero.isdigit() or not validar_luhn(numero):
@@ -394,11 +300,24 @@ def validar_cartao(numero: str, mes: str, ano: str, cvv: str) -> str | None:
         return "CVV inválido"
     return None
 
+
 _ERRO_KEYWORDS = [
-    "inválida", "recusado", "erro", "não foi possível", "inválido",
-    "declined", "invalid", "refused", "failed", "falhou",
-    "cartão não", "tente novamente", "não autorizado", "negado",
+    "inválida",
+    "recusado",
+    "erro",
+    "não foi possível",
+    "inválido",
+    "declined",
+    "invalid",
+    "refused",
+    "failed",
+    "falhou",
+    "cartão não",
+    "tente novamente",
+    "não autorizado",
+    "negado",
 ]
+
 
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
     """Preenche o formulário web com os dados do cartão e submete para teste."""
@@ -521,6 +440,7 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         logger.exception("Erro em processar_cartao")
         return f"erro:{type(exc).__name__}"
 
+
 async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | None:
     """Aguarda ativamente por alterações na página (como surgimento de botão 'Remover' ou alertas de erro)."""
     deadline = time.time() + timeout / 1000
@@ -547,6 +467,7 @@ async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | No
         await asyncio.sleep(0.15)
     return None
 
+
 async def _criar_contexto_worker(browser):
     """Cria um novo contexto isolado do navegador para um worker específico."""
     context = await browser.new_context(
@@ -558,6 +479,7 @@ async def _criar_contexto_worker(browser):
     page.on("dialog", lambda d: asyncio.create_task(d.accept()))
     await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
     return context, page
+
 
 # ================= WORKER CONCORRENTE =================
 async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> None:
@@ -626,12 +548,18 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await fila.put((indice, linha, tentativa + 1))
                     continue
                 elif resultado == "erro:sessao_expirada" and tentativa < MAX_TENTATIVAS:
-                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sessão expirada - recriando contexto")
+                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sessão expirada - renovando via auth_unimar")
                     try:
                         if context:
                             await context.close()
                     except Exception:
                         pass
+                    await garantir_autenticacao(
+                        browser=browser,
+                        viewport=VIEWPORT,
+                        log_fn=lambda m: log(app, m),
+                        forcar_novo_login=True,
+                    )
                     context, page = await _criar_contexto_worker(browser)
                     await fila.put((indice, linha, tentativa + 1))
                     continue
@@ -647,13 +575,17 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await inc_estado("tarefas_concluidas", 1)
 
                 velocidade, elapsed = await calc_velocidade()
-                await broadcast(app, "progresso", {
-                    "processados": estado.tarefas_concluidas,
-                    "total": estado.total_cartoes,
-                    "aprovados": estado.aprovados,
-                    "velocidade": velocidade,
-                    "tempo": elapsed,
-                })
+                await broadcast(
+                    app,
+                    "progresso",
+                    {
+                        "processados": estado.tarefas_concluidas,
+                        "total": estado.total_cartoes,
+                        "aprovados": estado.aprovados,
+                        "velocidade": velocidade,
+                        "tempo": elapsed,
+                    },
+                )
 
             finally:
                 fila.task_done()
@@ -669,13 +601,15 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
         await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
         log(app, f"[Canal {id_worker}] Finalizado")
 
+
 def _escrever_aprovado(linha: str) -> None:
     """Salva os cartões aprovados em um arquivo de texto local."""
     with open("aprovados.txt", "a", encoding="utf-8") as f:
         f.write(f"{linha}\n")
 
+
 async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: FastAPI) -> None:
-    """Coordena a execução geral: inicializa a fila, lança o navegador, autentica e distribui as tarefas para os workers."""
+    """Coordena a execução geral: inicializa a fila, lança o navegador, autentica via auth_unimar e distribui as tarefas."""
     try:
         if not NOME_FIXO:
             log(app, "[ERRO] UNIMAR_NOME não configurado!")
@@ -705,11 +639,20 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
             browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
             app.state.browser = browser
             try:
-                if not await login_mestre(pw, app, browser):
+                autenticado = await garantir_autenticacao(
+                    browser=browser,
+                    viewport=VIEWPORT,
+                    log_fn=lambda m: log(app, m),
+                    limpar_fn=lambda pg: limpar_cartoes(pg, app),
+                )
+                if not autenticado:
                     log(app, "[ERRO] Falha na autenticação")
                     return
 
-                tasks = [asyncio.create_task(worker(i, browser, fila, app)) for i in range(1, num_canais + 1)]
+                tasks = [
+                    asyncio.create_task(worker(i, browser, fila, app))
+                    for i in range(1, num_canais + 1)
+                ]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
                 if estado.aprovados > 0 and not estado.cancelado:
@@ -736,6 +679,7 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         log(app, "[Sistema] Processamento concluído!")
         await broadcast(app, "status", {"rodando": False, "canais_ativos": 0})
 
+
 # ================= ROTAS DA API FASTAPI =================
 @app.post("/api/iniciar")
 async def iniciar(data: IniciarRequest):
@@ -747,6 +691,7 @@ async def iniciar(data: IniciarRequest):
     estado.task = asyncio.create_task(processar_todos_cartoes(data.lista, data.canais, app))
     return {"status": "iniciado"}
 
+
 @app.post("/api/parar")
 async def parar():
     """Interrompe o processamento em andamento."""
@@ -754,6 +699,7 @@ async def parar():
     log(app, "⛔ Interrupção solicitada")
     await broadcast(app, "status", {"rodando": False})
     return {"status": "parando"}
+
 
 @app.get("/api/status")
 async def status():
@@ -769,10 +715,12 @@ async def status():
         "tempo": elapsed,
     }
 
+
 @app.get("/api/health")
 async def health():
     """Endpoint básico para verificação de saúde da aplicação."""
     return {"status": "ok"}
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -792,7 +740,9 @@ async def websocket_endpoint(websocket: WebSocket):
         async with estado.lock:
             estado.clients.discard(websocket)
 
+
 _cached_template: str | None = None
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -803,12 +753,15 @@ async def index():
         if not template_path.is_file():
             return JSONResponse(
                 status_code=404,
-                content={"detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."}
+                content={
+                    "detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."
+                },
             )
         _cached_template = await asyncio.to_thread(
             template_path.read_text, encoding="utf-8"
         )
     return HTMLResponse(content=_cached_template)
+
 
 # ================= EXECUÇÃO PRINCIPAL =================
 if __name__ == "__main__":
