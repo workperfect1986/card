@@ -246,11 +246,9 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         log(app, "[Faxina] Iniciando limpeza...")
         await page.goto(URL_MEUS_CARTOES, wait_until="networkidle", timeout=30000)
 
-        # Busca qualquer elemento clicável/visível com texto exato "Remover"
         botoes_remover = page.get_by_text("Remover", exact=True).locator("visible=true")
 
         if await botoes_remover.count() == 0:
-            # Pequena espera caso os cartões carreguem via XHR após o load
             try:
                 await botoes_remover.first.wait_for(state="visible", timeout=3000)
             except Exception:
@@ -275,7 +273,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
             try:
                 await alvo.click(force=True, timeout=5000)
 
-                # Caso abra algum modal/popup HTML de confirmação ("Confirmar", "Sim", "Excluir", "Remover")
                 await asyncio.sleep(0.3)
                 btn_confirmar = page.locator(
                     ".modal:visible button:has-text('Sim'), "
@@ -286,7 +283,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
                 if await btn_confirmar.count() > 0:
                     await btn_confirmar.click(force=True, timeout=3000)
 
-                # Aguarda recarregamento da página ou redução dos botões 'Remover' visíveis
                 deadline = time.time() + 8.0
                 reduziu = False
                 while time.time() < deadline:
@@ -295,7 +291,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
                             reduziu = True
                             break
                     except Exception:
-                        # Página em navegação/reload: aguarda estabilizar
                         await page.wait_for_load_state("domcontentloaded", timeout=5000)
                         if await botoes_remover.count() < qtd_antes:
                             reduziu = True
@@ -305,7 +300,6 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
                 if reduziu:
                     removidos += 1
                 else:
-                    # Recarrega para conferir o estado real do servidor caso a UI não tenha atualizado
                     await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
                     if await botoes_remover.count() >= qtd_antes:
                         log(app, "[Faxina] Não foi possível remover o item atual, encerrando.")
@@ -729,3 +723,131 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         log(app, f"[Sistema] {num_canais} canais | {len(linhas)} cartões")
 
         fila = asyncio.Queue()
+        for idx, linha in enumerate(linhas, 1):
+            await fila.put((idx, linha, 1))
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
+            app.state.browser = browser
+            try:
+                autenticado = await garantir_autenticacao(
+                    browser=browser,
+                    viewport=VIEWPORT,
+                    log_fn=lambda m: log(app, m),
+                )
+                if not autenticado:
+                    log(app, "[ERRO] Falha na autenticação")
+                    return
+
+                await _executar_faxina_em_contexto(browser, app)
+
+                tasks = [
+                    asyncio.create_task(worker(i, browser, fila, app))
+                    for i in range(1, num_canais + 1)
+                ]
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+                if estado.aprovados > 0 and not estado.cancelado:
+                    log(app, "[Sistema] Faxina final...")
+                    await _executar_faxina_em_contexto(browser, app)
+            finally:
+                app.state.browser = None
+                await browser.close()
+    except Exception:
+        logger.exception("[ERRO CRÍTICO]")
+    finally:
+        await set_estado(rodando=False, cancelado=False, canais_ativos=0)
+        log(app, "[Sistema] Processamento concluído!")
+        await broadcast(app, "status", {"rodando": False, "canais_ativos": 0})
+
+
+# ================= ROTAS DA API FASTAPI =================
+@app.post("/api/iniciar")
+async def iniciar(data: IniciarRequest):
+    """Inicia o processo de validação de cartões em segundo plano."""
+    if estado.rodando:
+        return {"status": "já_em_execucao"}
+    await set_estado(rodando=True, cancelado=False)
+    await broadcast(app, "status", {"rodando": True})
+    estado.task = asyncio.create_task(processar_todos_cartoes(data.lista, data.canais, app))
+    return {"status": "iniciado"}
+
+
+@app.post("/api/parar")
+async def parar():
+    """Interrompe o processamento em andamento."""
+    await set_estado(rodando=False, cancelado=True)
+    log(app, "⛔ Interrupção solicitada")
+    await broadcast(app, "status", {"rodando": False})
+    return {"status": "parando"}
+
+
+@app.get("/api/status")
+async def status():
+    """Retorna o status atual e as métricas do processamento."""
+    velocidade, elapsed = await calc_velocidade()
+    return {
+        "rodando": estado.rodando,
+        "total": estado.total_cartoes,
+        "processados": estado.tarefas_concluidas,
+        "aprovados": estado.aprovados,
+        "canais_ativos": estado.canais_ativos,
+        "velocidade": velocidade,
+        "tempo": elapsed,
+    }
+
+
+@app.get("/api/health")
+async def health():
+    """Endpoint básico para verificação de saúde da aplicação."""
+    return {"status": "ok"}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Gerencia conexões WebSocket para comunicação em tempo real com o frontend."""
+    await websocket.accept()
+    async with estado.lock:
+        estado.clients.add(websocket)
+    logger.info("WebSocket conectado: %s", websocket.client)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        logger.info("WebSocket desconectado: %s", websocket.client)
+    except Exception:
+        logger.exception("Erro no WebSocket")
+    finally:
+        async with estado.lock:
+            estado.clients.discard(websocket)
+
+
+_cached_template: str | None = None
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """Serve a interface HTML principal do painel."""
+    global _cached_template
+    if _cached_template is None:
+        template_path = Path("templates/index.html")
+        if not template_path.is_file():
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."
+                },
+            )
+        _cached_template = await asyncio.to_thread(
+            template_path.read_text, encoding="utf-8"
+        )
+    return HTMLResponse(content=_cached_template)
+
+
+# ================= EXECUÇÃO PRINCIPAL =================
+if __name__ == "__main__":
+    print("=" * 50)
+    print(f"🚀 Unimar Card Tester iniciando em 0.0.0.0:{PORT}")
+    print("🎭 Playwright será verificado no startup")
+    print("=" * 50)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
