@@ -238,54 +238,105 @@ app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 # ================= FLUXOS DO PLAYWRIGHT =================
 async def limpar_cartoes(page, app: FastAPI) -> None:
     """
-    Remove cartões salvos anteriormente na conta.
-    Encerra imediatamente quando nenhum botão 'Remover' estiver mais visível na tela.
+    Remove cartões salvos na conta clicando nos elementos visíveis 'Remover'
+    (independente de serem <button>, <a> ou <span>) e confirmando modais se houver.
+    Encerra imediatamente quando nenhum 'Remover' estiver mais visível na tela.
     """
     try:
         log(app, "[Faxina] Iniciando limpeza...")
-        if URL_MEUS_CARTOES not in page.url:
-            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+        await page.goto(URL_MEUS_CARTOES, wait_until="networkidle", timeout=30000)
 
-        botoes_visiveis = page.locator("button:has-text('Remover'):visible, [role='button']:has-text('Remover'):visible")
+        # Busca qualquer elemento clicável/visível com texto exato "Remover"
+        botoes_remover = page.get_by_text("Remover", exact=True).locator("visible=true")
 
-        try:
-            await botoes_visiveis.first.wait_for(state="visible", timeout=4000)
-        except Exception:
-            log(app, "[Faxina] Nenhum cartão para remover")
-            return
+        if await botoes_remover.count() == 0:
+            # Pequena espera caso os cartões carreguem via XHR após o load
+            try:
+                await botoes_remover.first.wait_for(state="visible", timeout=3000)
+            except Exception:
+                log(app, "[Faxina] Nenhum cartão para remover")
+                return
 
         removidos = 0
         for _ in range(100):
             if estado.cancelado:
                 break
 
-            qtd_antes = await botoes_visiveis.count()
+            qtd_antes = await botoes_remover.count()
             if qtd_antes == 0:
                 break
 
+            alvo = botoes_remover.first
             try:
-                await botoes_visiveis.first.scroll_into_view_if_needed(timeout=3000)
+                await alvo.scroll_into_view_if_needed(timeout=3000)
             except Exception:
                 pass
 
             try:
-                await botoes_visiveis.first.click(force=True, timeout=5000)
-                # Aguarda a quantidade de botões 'Remover' visíveis diminuir ou zerar
-                deadline = time.time() + 6.0
+                await alvo.click(force=True, timeout=5000)
+
+                # Caso abra algum modal/popup HTML de confirmação ("Confirmar", "Sim", "Excluir", "Remover")
+                await asyncio.sleep(0.3)
+                btn_confirmar = page.locator(
+                    ".modal:visible button:has-text('Sim'), "
+                    ".modal:visible button:has-text('Confirmar'), "
+                    ".modal:visible button:has-text('Remover'), "
+                    ".swal2-confirm:visible"
+                ).first
+                if await btn_confirmar.count() > 0:
+                    await btn_confirmar.click(force=True, timeout=3000)
+
+                # Aguarda recarregamento da página ou redução dos botões 'Remover' visíveis
+                deadline = time.time() + 8.0
+                reduziu = False
                 while time.time() < deadline:
-                    if await botoes_visiveis.count() < qtd_antes:
+                    try:
+                        if await botoes_remover.count() < qtd_antes:
+                            reduziu = True
+                            break
+                    except Exception:
+                        # Página em navegação/reload: aguarda estabilizar
+                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        if await botoes_remover.count() < qtd_antes:
+                            reduziu = True
+                            break
+                    await asyncio.sleep(0.2)
+
+                if reduziu:
+                    removidos += 1
+                else:
+                    # Recarrega para conferir o estado real do servidor caso a UI não tenha atualizado
+                    await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=15000)
+                    if await botoes_remover.count() >= qtd_antes:
+                        log(app, "[Faxina] Não foi possível remover o item atual, encerrando.")
                         break
-                    await asyncio.sleep(0.15)
-                removidos += 1
+                    removidos += 1
+
             except Exception:
-                # Se não houver mais botão visível após erro de clique, encerra
-                if await botoes_visiveis.count() == 0:
+                if await botoes_remover.count() == 0:
                     break
                 await asyncio.sleep(0.2)
 
         log(app, f"[Faxina] Concluída ({removidos} removidos)")
     except Exception:
         logger.exception("[Faxina] Erro")
+
+
+async def _executar_faxina_em_contexto(browser, app: FastAPI) -> None:
+    """Abre um contexto temporário autenticado para rodar a faxina com segurança."""
+    if not SESSAO_PATH.exists():
+        return
+    ctx = await browser.new_context(
+        storage_state=str(SESSAO_PATH),
+        viewport=VIEWPORT,
+        user_agent=USER_AGENT,
+    )
+    pg = await ctx.new_page()
+    pg.on("dialog", lambda d: asyncio.create_task(d.accept()))
+    try:
+        await limpar_cartoes(pg, app)
+    finally:
+        await ctx.close()
 
 
 # ================= VALIDAÇÕES DE CARTÃO =================
@@ -344,7 +395,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
     """Preenche o formulário web com os dados do cartão, submete e aguarda retorno exato."""
     _TIMEOUT = 15000
     try:
-        # Sempre recarrega/garante estado limpo da página para não ler alertas de tentativas anteriores
         await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
 
         url_atual = page.url
@@ -354,7 +404,7 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
 
         btn_adicionar = page.locator(
             "button:has-text('Adicionar Cartão'), button:has-text('Novo Cartão'), "
-            "[role='button']:has-text('Cartão')"
+            "[role='button']:has-text('Cartão'), a:has-text('Adicionar Cartão')"
         ).first
         if not await btn_adicionar.count():
             btn_adicionar = page.get_by_role("button", name="Adicionar Cartão de Crédito")
@@ -434,7 +484,6 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:campo_cvv"
 
-        # Captura estado baseline antes de clicar em Registrar
         corpo_antes = await page.locator("body").inner_text()
         ativos_antes = _contar_ativos(corpo_antes)
 
@@ -478,7 +527,6 @@ async def _aguardar_resultado(page, ativos_antes: int, timeout: int) -> str | No
         if "login" in page.url.lower():
             return "erro:sessao_expirada"
 
-        # 1. Verifica elementos de alerta/erro visíveis
         try:
             erros = page.locator(
                 ".alert:visible, .toast:visible, .notification:visible, "
@@ -496,7 +544,6 @@ async def _aguardar_resultado(page, ativos_antes: int, timeout: int) -> str | No
         except Exception:
             pass
 
-        # 2. Verifica o texto completo da página para 'Requisição inválida!' ou 'Ativo'
         try:
             corpo = await page.locator("body").inner_text()
             corpo_lower = corpo.lower()
@@ -682,141 +729,3 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
         log(app, f"[Sistema] {num_canais} canais | {len(linhas)} cartões")
 
         fila = asyncio.Queue()
-        for idx, linha in enumerate(linhas, 1):
-            await fila.put((idx, linha, 1))
-
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
-            app.state.browser = browser
-            try:
-                autenticado = await garantir_autenticacao(
-                    browser=browser,
-                    viewport=VIEWPORT,
-                    log_fn=lambda m: log(app, m),
-                    limpar_fn=lambda pg: limpar_cartoes(pg, app),
-                )
-                if not autenticado:
-                    log(app, "[ERRO] Falha na autenticação")
-                    return
-
-                tasks = [
-                    asyncio.create_task(worker(i, browser, fila, app))
-                    for i in range(1, num_canais + 1)
-                ]
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                if estado.aprovados > 0 and not estado.cancelado:
-                    log(app, "[Sistema] Faxina final...")
-                    try:
-                        ctx = await browser.new_context(
-                            storage_state=str(SESSAO_PATH),
-                            viewport=VIEWPORT,
-                            user_agent=USER_AGENT,
-                        )
-                        pg = await ctx.new_page()
-                        pg.on("dialog", lambda d: asyncio.create_task(d.accept()))
-                        await limpar_cartoes(pg, app)
-                        await ctx.close()
-                    except Exception:
-                        logger.exception("[Faxina] Erro")
-            finally:
-                app.state.browser = None
-                await browser.close()
-    except Exception:
-        logger.exception("[ERRO CRÍTICO]")
-    finally:
-        await set_estado(rodando=False, cancelado=False, canais_ativos=0)
-        log(app, "[Sistema] Processamento concluído!")
-        await broadcast(app, "status", {"rodando": False, "canais_ativos": 0})
-
-
-# ================= ROTAS DA API FASTAPI =================
-@app.post("/api/iniciar")
-async def iniciar(data: IniciarRequest):
-    """Inicia o processo de validação de cartões em segundo plano."""
-    if estado.rodando:
-        return {"status": "já_em_execucao"}
-    await set_estado(rodando=True, cancelado=False)
-    await broadcast(app, "status", {"rodando": True})
-    estado.task = asyncio.create_task(processar_todos_cartoes(data.lista, data.canais, app))
-    return {"status": "iniciado"}
-
-
-@app.post("/api/parar")
-async def parar():
-    """Interrompe o processamento em andamento."""
-    await set_estado(rodando=False, cancelado=True)
-    log(app, "⛔ Interrupção solicitada")
-    await broadcast(app, "status", {"rodando": False})
-    return {"status": "parando"}
-
-
-@app.get("/api/status")
-async def status():
-    """Retorna o status atual e as métricas do processamento."""
-    velocidade, elapsed = await calc_velocidade()
-    return {
-        "rodando": estado.rodando,
-        "total": estado.total_cartoes,
-        "processados": estado.tarefas_concluidas,
-        "aprovados": estado.aprovados,
-        "canais_ativos": estado.canais_ativos,
-        "velocidade": velocidade,
-        "tempo": elapsed,
-    }
-
-
-@app.get("/api/health")
-async def health():
-    """Endpoint básico para verificação de saúde da aplicação."""
-    return {"status": "ok"}
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Gerencia conexões WebSocket para comunicação em tempo real com o frontend."""
-    await websocket.accept()
-    async with estado.lock:
-        estado.clients.add(websocket)
-    logger.info("WebSocket conectado: %s", websocket.client)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        logger.info("WebSocket desconectado: %s", websocket.client)
-    except Exception:
-        logger.exception("Erro no WebSocket")
-    finally:
-        async with estado.lock:
-            estado.clients.discard(websocket)
-
-
-_cached_template: str | None = None
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    """Serve a interface HTML principal do painel."""
-    global _cached_template
-    if _cached_template is None:
-        template_path = Path("templates/index.html")
-        if not template_path.is_file():
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."
-                },
-            )
-        _cached_template = await asyncio.to_thread(
-            template_path.read_text, encoding="utf-8"
-        )
-    return HTMLResponse(content=_cached_template)
-
-
-# ================= EXECUÇÃO PRINCIPAL =================
-if __name__ == "__main__":
-    print("=" * 50)
-    print(f"🚀 Unimar Card Tester iniciando em 0.0.0.0:{PORT}")
-    print("🎭 Playwright será verificado no startup")
-    print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
