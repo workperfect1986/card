@@ -236,7 +236,7 @@ app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 
 
 # ================= FLUXOS DO PLAYWRIGHT =================
-async def limpar_cartoes(page, app: FastAPI) -> None:
+async def limpar_cartoes(page, app: FastAPI, ignorar_cancelamento: bool = False) -> None:
     """
     Remove cartões salvos na conta clicando nos elementos visíveis 'Remover'
     (independente de serem <button>, <a> ou <span>) e confirmando modais se houver.
@@ -257,7 +257,7 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
 
         removidos = 0
         for _ in range(100):
-            if estado.cancelado:
+            if estado.cancelado and not ignorar_cancelamento:
                 break
 
             qtd_antes = await botoes_remover.count()
@@ -316,7 +316,9 @@ async def limpar_cartoes(page, app: FastAPI) -> None:
         logger.exception("[Faxina] Erro")
 
 
-async def _executar_faxina_em_contexto(browser, app: FastAPI) -> None:
+async def _executar_faxina_em_contexto(
+    browser, app: FastAPI, ignorar_cancelamento: bool = False
+) -> None:
     """Abre um contexto temporário autenticado para rodar a faxina com segurança."""
     if not SESSAO_PATH.exists():
         return
@@ -328,7 +330,7 @@ async def _executar_faxina_em_contexto(browser, app: FastAPI) -> None:
     pg = await ctx.new_page()
     pg.on("dialog", lambda d: asyncio.create_task(d.accept()))
     try:
-        await limpar_cartoes(pg, app)
+        await limpar_cartoes(pg, app, ignorar_cancelamento=ignorar_cancelamento)
     finally:
         await ctx.close()
 
@@ -596,258 +598,4 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     continue
 
                 numero, mes, ano, cvv = partes
-                erro_validacao = validar_cartao(numero, mes, ano, cvv)
-                if erro_validacao:
-                    log(app, f"[Canal {id_worker}][{indice}] ❌ {erro_validacao}")
-                    await broadcast(app, "reprovado", {"cartao": linha})
-                    await inc_estado("tarefas_concluidas", 1)
-                    continue
-
-                log(app, f"[Canal {id_worker}][{indice}] ****{numero[-4:]}")
-
-                try:
-                    resultado = await processar_cartao(page, numero, mes, ano, cvv)
-                except Exception:
-                    logger.exception("[Canal %s] Page crash, recriando...", id_worker)
-                    log(app, f"[Canal {id_worker}] ⚠️ Recriando contexto...")
-                    try:
-                        if context:
-                            await context.close()
-                    except Exception:
-                        pass
-                    context, page = await _criar_contexto_worker(browser)
-                    await fila.put((indice, linha, tentativa))
-                    continue
-
-                if resultado == "aprovado":
-                    log(app, f"[Canal {id_worker}][{indice}] ✅ APROVADO")
-                    await broadcast(app, "aprovado", {"cartao": linha})
-                    await inc_estado("aprovados", 1)
-                    await asyncio.to_thread(_escrever_aprovado, linha)
-                    await inc_estado("tarefas_concluidas", 1)
-                elif resultado == "reprovado" or resultado.startswith("reprovado:"):
-                    motivo = resultado.split(":", 1)[1].strip() if ":" in resultado else ""
-                    if motivo:
-                        log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado - {motivo}")
-                    else:
-                        log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado")
-                    await broadcast(app, "reprovado", {"cartao": linha})
-                    await inc_estado("tarefas_concluidas", 1)
-                elif resultado == "timeout" and tentativa < MAX_TENTATIVAS:
-                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sem resposta (Timeout) - Retentativa {tentativa + 1}")
-                    await asyncio.sleep(0.5)
-                    await fila.put((indice, linha, tentativa + 1))
-                    continue
-                elif resultado == "erro:sessao_expirada" and tentativa < MAX_TENTATIVAS:
-                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sessão expirada - renovando via auth_unimar")
-                    try:
-                        if context:
-                            await context.close()
-                    except Exception:
-                        pass
-                    await garantir_autenticacao(
-                        browser=browser,
-                        viewport=VIEWPORT,
-                        log_fn=lambda m: log(app, m),
-                        forcar_novo_login=True,
-                    )
-                    context, page = await _criar_contexto_worker(browser)
-                    await fila.put((indice, linha, tentativa + 1))
-                    continue
-                else:
-                    if resultado == "timeout":
-                        log(app, f"[Canal {id_worker}][{indice}] ❌ Timeout máximo")
-                    elif resultado == "cancelado":
-                        log(app, f"[Canal {id_worker}][{indice}] ⏹️ Cancelado")
-                    else:
-                        tipo_exc = resultado.split(":", 1)[1] if ":" in resultado else resultado
-                        log(app, f"[Canal {id_worker}][{indice}] ❌ Erro: {tipo_exc}")
-                    await broadcast(app, "reprovado", {"cartao": linha})
-                    await inc_estado("tarefas_concluidas", 1)
-
-                velocidade, elapsed = await calc_velocidade()
-                await broadcast(
-                    app,
-                    "progresso",
-                    {
-                        "processados": estado.tarefas_concluidas,
-                        "total": estado.total_cartoes,
-                        "aprovados": estado.aprovados,
-                        "velocidade": velocidade,
-                        "tempo": elapsed,
-                    },
-                )
-
-            finally:
-                fila.task_done()
-    except Exception:
-        logger.exception("[Canal %s] ERRO", id_worker)
-    finally:
-        if context:
-            try:
-                await context.close()
-            except Exception:
-                pass
-        await inc_estado("canais_ativos", -1)
-        await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
-        log(app, f"[Canal {id_worker}] Finalizado")
-
-
-def _escrever_aprovado(linha: str) -> None:
-    """Salva os cartões aprovados em um arquivo de texto local."""
-    with open("aprovados.txt", "a", encoding="utf-8") as f:
-        f.write(f"{linha}\n")
-
-
-async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: FastAPI) -> None:
-    """Coordena a execução geral: inicializa a fila, lança o navegador, autentica via auth_unimar e distribui as tarefas."""
-    try:
-        if not NOME_FIXO:
-            log(app, "[ERRO] UNIMAR_NOME não configurado!")
-            return
-
-        linhas = list(dict.fromkeys([l.strip() for l in texto_cartoes.splitlines() if l.strip()]))
-        if not linhas:
-            log(app, "[ERRO] Nenhum cartão fornecido")
-            return
-
-        await set_estado(
-            total_cartoes=len(linhas),
-            tarefas_concluidas=0,
-            aprovados=0,
-            cancelado=False,
-            inicio_timestamp=time.time(),
-        )
-
-        num_canais = min(max(num_canais, 1), MAX_CANAIS, len(linhas))
-        log(app, f"[Sistema] {num_canais} canais | {len(linhas)} cartões")
-
-        fila = asyncio.Queue()
-        for idx, linha in enumerate(linhas, 1):
-            await fila.put((idx, linha, 1))
-
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True, args=BROWSER_ARGS)
-            app.state.browser = browser
-            try:
-                autenticado = await garantir_autenticacao(
-                    browser=browser,
-                    viewport=VIEWPORT,
-                    log_fn=lambda m: log(app, m),
-                )
-                if not autenticado:
-                    log(app, "[ERRO] Falha na autenticação")
-                    return
-
-                await _executar_faxina_em_contexto(browser, app)
-
-                tasks = [
-                    asyncio.create_task(worker(i, browser, fila, app))
-                    for i in range(1, num_canais + 1)
-                ]
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                if estado.aprovados > 0 and not estado.cancelado:
-                    log(app, "[Sistema] Faxina final...")
-                    await _executar_faxina_em_contexto(browser, app)
-            finally:
-                app.state.browser = None
-                await browser.close()
-    except Exception:
-        logger.exception("[ERRO CRÍTICO]")
-    finally:
-        await set_estado(rodando=False, cancelado=False, canais_ativos=0)
-        log(app, "[Sistema] Processamento concluído!")
-        await broadcast(app, "status", {"rodando": False, "canais_ativos": 0})
-
-
-# ================= ROTAS DA API FASTAPI =================
-@app.post("/api/iniciar")
-async def iniciar(data: IniciarRequest):
-    """Inicia o processo de validação de cartões em segundo plano."""
-    if estado.rodando:
-        return {"status": "já_em_execucao"}
-    await set_estado(rodando=True, cancelado=False)
-    await broadcast(app, "status", {"rodando": True})
-    estado.task = asyncio.create_task(processar_todos_cartoes(data.lista, data.canais, app))
-    return {"status": "iniciado"}
-
-
-@app.post("/api/parar")
-async def parar():
-    """Interrompe o processamento em andamento."""
-    await set_estado(rodando=False, cancelado=True)
-    log(app, "⛔ Interrupção solicitada")
-    await broadcast(app, "status", {"rodando": False})
-    return {"status": "parando"}
-
-
-@app.get("/api/status")
-async def status():
-    """Retorna o status atual e as métricas do processamento."""
-    velocidade, elapsed = await calc_velocidade()
-    return {
-        "rodando": estado.rodando,
-        "total": estado.total_cartoes,
-        "processados": estado.tarefas_concluidas,
-        "aprovados": estado.aprovados,
-        "canais_ativos": estado.canais_ativos,
-        "velocidade": velocidade,
-        "tempo": elapsed,
-    }
-
-
-@app.get("/api/health")
-async def health():
-    """Endpoint básico para verificação de saúde da aplicação."""
-    return {"status": "ok"}
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Gerencia conexões WebSocket para comunicação em tempo real com o frontend."""
-    await websocket.accept()
-    async with estado.lock:
-        estado.clients.add(websocket)
-    logger.info("WebSocket conectado: %s", websocket.client)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        logger.info("WebSocket desconectado: %s", websocket.client)
-    except Exception:
-        logger.exception("Erro no WebSocket")
-    finally:
-        async with estado.lock:
-            estado.clients.discard(websocket)
-
-
-_cached_template: str | None = None
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    """Serve a interface HTML principal do painel."""
-    global _cached_template
-    if _cached_template is None:
-        template_path = Path("templates/index.html")
-        if not template_path.is_file():
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "detail": "Template não encontrado. Verifique se o arquivo templates/index.html existe."
-                },
-            )
-        _cached_template = await asyncio.to_thread(
-            template_path.read_text, encoding="utf-8"
-        )
-    return HTMLResponse(content=_cached_template)
-
-
-# ================= EXECUÇÃO PRINCIPAL =================
-if __name__ == "__main__":
-    print("=" * 50)
-    print(f"🚀 Unimar Card Tester iniciando em 0.0.0.0:{PORT}")
-    print("🎭 Playwright será verificado no startup")
-    print("=" * 50)
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
+                erro_valid
