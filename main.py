@@ -459,8 +459,17 @@ async def _aguardar_resultado(page, botoes_antes: int, timeout: int) -> str | No
             )
             if await erros.count() > 0:
                 texto = (await erros.first.inner_text()).lower()
+                if "requisição inválida" in texto:
+                    return "reprovado:Requisição inválida!"
                 if any(x in texto for x in _ERRO_KEYWORDS):
                     return "reprovado"
+        except Exception:
+            pass
+
+        try:
+            corpo = (await page.locator("body").inner_text()).lower()
+            if "requisição inválida" in corpo:
+                return "reprovado:Requisição inválida!"
         except Exception:
             pass
 
@@ -539,8 +548,12 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     await inc_estado("aprovados", 1)
                     await asyncio.to_thread(_escrever_aprovado, linha)
                     await inc_estado("tarefas_concluidas", 1)
-                elif resultado == "reprovado":
-                    log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado")
+                elif resultado == "reprovado" or resultado.startswith("reprovado:"):
+                    motivo = resultado.split(":", 1)[1] if ":" in resultado else ""
+                    if motivo:
+                        log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado - {motivo}")
+                    else:
+                        log(app, f"[Canal {id_worker}][{indice}] ❌ Reprovado")
                     await broadcast(app, "reprovado", {"cartao": linha})
                     await inc_estado("tarefas_concluidas", 1)
                 elif resultado == "timeout" and tentativa < MAX_TENTATIVAS:
